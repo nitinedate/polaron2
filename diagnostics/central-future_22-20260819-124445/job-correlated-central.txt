@@ -1,0 +1,12 @@
+2026-08-19T06:20:55.321634944Z INFO:     172.18.0.8:35684 - "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 OK
+2026-08-19T06:20:55.546263754Z INFO:     172.18.0.8:35688 - "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 OK
+2026-08-19T06:21:11.324705444Z INFO:     172.18.0.8:38694 - "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 OK
+2026-08-19T06:21:27.254619240Z INFO:     172.18.0.8:36344 - "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 OK
+2026-08-19T06:21:42.990372291Z INFO:     172.18.0.8:44830 - "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 OK
+2026-08-19T06:21:43.215662890Z INFO:     172.18.0.8:44844 - "POST /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804/results HTTP/1.1" 200 OK
+2026-08-19T06:20:55.321918570Z 172.18.0.1 - - [19/Aug/2026:06:20:55 +0000] "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 122 "-" "python-httpx/0.28.1" "-"
+2026-08-19T06:20:55.546539179Z 172.18.0.1 - - [19/Aug/2026:06:20:55 +0000] "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 116 "-" "python-httpx/0.28.1" "-"
+2026-08-19T06:21:11.325269095Z 172.18.0.1 - - [19/Aug/2026:06:21:11 +0000] "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 115 "-" "python-httpx/0.28.1" "-"
+2026-08-19T06:21:27.255131188Z 172.18.0.1 - - [19/Aug/2026:06:21:27 +0000] "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 115 "-" "python-httpx/0.28.1" "-"
+2026-08-19T06:21:42.990653717Z 172.18.0.1 - - [19/Aug/2026:06:21:42 +0000] "PATCH /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804 HTTP/1.1" 200 112 "-" "python-httpx/0.28.1" "-"
+2026-08-19T06:21:43.216093129Z 172.18.0.1 - - [19/Aug/2026:06:21:43 +0000] "POST /api/scanner-agent/jobs/ddabfb92-3f2b-444b-8289-cf645dd21804/results HTTP/1.1" 200 51 "-" "python-httpx/0.28.1" "-"

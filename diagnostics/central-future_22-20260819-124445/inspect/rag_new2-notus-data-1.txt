@@ -1,0 +1,7 @@
+Name=/rag_new2-notus-data-1 Image=registry.community.greenbone.net/community/notus-data Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:13:53.658401167Z FinishedAt=2026-08-19T05:13:33.463182946Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-notus-data-1","notus-data"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"1e3ec94ed080aa59f56459e4a5c8587f08c1f0e9b2a125ba3cfbaa04e6e64dd0","Gateway":"172.18.0.1","IPAddress":"172.18.0.15","MacAddress":"ba:fa:47:53:19:45","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-notus-data-1","notus-data","cdcd511540ea"]}}
+2026-08-19 07:12:36.369463295 +0000 UTC exit= 0 
+2026-08-19 07:13:06.455598151 +0000 UTC exit= 0 
+2026-08-19 07:13:36.577667605 +0000 UTC exit= 0 
+2026-08-19 07:14:06.669292174 +0000 UTC exit= 0 
+2026-08-19 07:14:36.754662961 +0000 UTC exit= 0 
+

@@ -1,0 +1,28 @@
+-[ RECORD 1 ]+---------------------------------------------------------
+jsonb_pretty | {                                                       +
+             |     "id": "968f0f99-9dea-4fae-b601-ca3833069b68",       +
+             |     "title": "future 22",                               +
+             |     "job_id": null,                                     +
+             |     "number": null,                                     +
+             |     "status": "open",                                   +
+             |     "owner_id": "b0000000-0000-4000-8000-000000000101", +
+             |     "timezone": "UTC",                                  +
+             |     "created_at": "2026-08-19T06:20:18.66485+00:00",    +
+             |     "updated_at": "2026-08-19T06:22:58.354741+00:00",   +
+             |     "gap_site_json": {                                  +
+             |         "author": "",                                   +
+             |         "client_name": "future 22",                     +
+             |         "company_name": "Aetheris Technologies Pvt Ltd",+
+             |         "key_contacts": [                               +
+             |             {                                           +
+             |                 "name": "Mr. Nitin Jambhale",           +
+             |                 "email": "nitin@aetheris.in",           +
+             |                 "title": "Operations Manager"           +
+             |             }                                           +
+             |         ],                                              +
+             |         "document_version": "1.0"                       +
+             |     },                                                  +
+             |     "classification": null,                             +
+             |     "authorization_notes": null                         +
+             | }
+

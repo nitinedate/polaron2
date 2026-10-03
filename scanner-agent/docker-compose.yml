@@ -1,0 +1,41 @@
+# Laptop-side scanner agent. Pair with a local Greenbone/OpenVAS stack that
+# shares the gvmd socket volume (or set GVM_URL=tls://host.docker.internal:9390).
+#
+#   cp .env.example .env   # fill CENTRAL_API_URL, TENANT_SLUG, AGENT_TOKEN
+#   docker compose up -d
+
+services:
+  scanner-agent:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CENTRAL_API_URL: ${CENTRAL_API_URL}
+      TENANT_SLUG: ${TENANT_SLUG}
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      GVM_SOCKET_PATH: ${GVM_SOCKET_PATH:-/run/gvmd/gvmd.sock}
+      GVM_USERNAME: ${GVM_USERNAME:-admin}
+      GVM_PASSWORD: ${GVM_PASSWORD:-admin}
+      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-15}
+      VERIFY_TLS: ${VERIFY_TLS:-true}
+      PORT_PROFILE: ${PORT_PROFILE:-full}
+      PLUGINS_TIMEOUT_SEC: ${PLUGINS_TIMEOUT_SEC:-0}
+      SCANNER_PLUGINS_TIMEOUT_SEC: ${SCANNER_PLUGINS_TIMEOUT_SEC:-0}
+      GVM_REPORT_MIN_QOD: ${GVM_REPORT_MIN_QOD:-0}
+      GVM_OPTIMIZE_TEST: ${GVM_OPTIMIZE_TEST:-no}
+      GVM_SAFE_CHECKS: ${GVM_SAFE_CHECKS:-yes}
+      GVM_CHECKS_READ_TIMEOUT: ${GVM_CHECKS_READ_TIMEOUT:-10}
+      GVM_TIMEOUT_RETRY: ${GVM_TIMEOUT_RETRY:-3}
+      GVM_OPEN_SOCK_MAX_ATTEMPTS: ${GVM_OPEN_SOCK_MAX_ATTEMPTS:-5}
+      GVM_EXPAND_VHOSTS: ${GVM_EXPAND_VHOSTS:-yes}
+      GVM_TEST_EMPTY_VHOST: ${GVM_TEST_EMPTY_VHOST:-yes}
+      GVM_MIN_NVT_COUNT: ${GVM_MIN_NVT_COUNT:-10000}
+      GVM_ALLOW_BARE_TASK_FALLBACK: ${GVM_ALLOW_BARE_TASK_FALLBACK:-false}
+    volumes:
+      # Mount the same socket volume Greenbone gvmd uses on this laptop
+      - gvm_gvmd_socket:/run/gvmd:ro
+
+volumes:
+  gvm_gvmd_socket:
+    external: true
+    name: ${GVM_SOCKET_VOLUME:-greenbone_gvmd_socket}

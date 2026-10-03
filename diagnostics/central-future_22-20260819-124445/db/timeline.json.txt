@@ -1,0 +1,37 @@
+-[ RECORD 1 ]+---------------------------------------------------------
+jsonb_pretty | {                                                       +
+             |     "id": "56058028-5ef5-4076-85c7-8ae435047ed5",       +
+             |     "actor": "b0000000-0000-4000-8000-000000000101",    +
+             |     "case_id": "968f0f99-9dea-4fae-b601-ca3833069b68",  +
+             |     "summary": "Scan job created with 1 target(s)",     +
+             |     "asset_id": null,                                   +
+             |     "source_id": "ddabfb92-3f2b-444b-8289-cf645dd21804",+
+             |     "event_type": "scan.created",                       +
+             |     "source_type": "scan_job",                          +
+             |     "timestamp_utc": "2026-08-19T06:20:48.459932+00:00" +
+             | }
+-[ RECORD 2 ]+---------------------------------------------------------
+jsonb_pretty | {                                                       +
+             |     "id": "6431a099-95e0-4926-9b19-e76e9152624a",       +
+             |     "actor": "scanner-agent",                           +
+             |     "case_id": "968f0f99-9dea-4fae-b601-ca3833069b68",  +
+             |     "summary": "Edge scanner agent claimed job",        +
+             |     "asset_id": null,                                   +
+             |     "source_id": "ddabfb92-3f2b-444b-8289-cf645dd21804",+
+             |     "event_type": "scan.edge_claimed",                  +
+             |     "source_type": "scan_job",                          +
+             |     "timestamp_utc": "2026-08-19T06:20:55.009299+00:00" +
+             | }
+-[ RECORD 3 ]+---------------------------------------------------------
+jsonb_pretty | {                                                       +
+             |     "id": "5925973a-93f3-4d4b-80e2-a4d0ba66b073",       +
+             |     "actor": "scanner-agent",                           +
+             |     "case_id": "968f0f99-9dea-4fae-b601-ca3833069b68",  +
+             |     "summary": "Edge agent uploaded 0 finding(s)",      +
+             |     "asset_id": null,                                   +
+             |     "source_id": "ddabfb92-3f2b-444b-8289-cf645dd21804",+
+             |     "event_type": "scan.completed",                     +
+             |     "source_type": "scan_job",                          +
+             |     "timestamp_utc": "2026-08-19T06:21:43.183021+00:00" +
+             | }
+

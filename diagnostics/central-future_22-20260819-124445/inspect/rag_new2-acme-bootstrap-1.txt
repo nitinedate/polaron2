@@ -1,0 +1,2 @@
+Name=/rag_new2-acme-bootstrap-1 Image=nginx:1.27-alpine Status=exited Running=false Restarting=false OOMKilled=false ExitCode=128 RestartCount=0 StartedAt=2026-08-17T11:29:38.655245589Z FinishedAt=2026-08-17T11:30:28.580854639Z Health=none Networks={}
+

@@ -1,0 +1,7 @@
+Name=/rag_new2-api-1 Image=rag_new2-api Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:36:04.840279145Z FinishedAt=2026-08-19T05:36:03.69874953Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-api-1","api"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"1a8a1731a722c158576938ece59ce92b639d6dded87d98b39bbcd80d49922ed0","Gateway":"172.18.0.1","IPAddress":"172.18.0.29","MacAddress":"3e:ba:7b:c2:84:d1","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-api-1","api","c3e243c86a8b"]}}
+2026-08-19 07:14:09.020115345 +0000 UTC exit= 0 
+2026-08-19 07:14:19.77472282 +0000 UTC exit= 0 
+2026-08-19 07:14:30.485150338 +0000 UTC exit= 0 
+2026-08-19 07:14:41.165378932 +0000 UTC exit= 0 
+2026-08-19 07:14:52.347951322 +0000 UTC exit= 0 
+

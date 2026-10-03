@@ -1,0 +1,7 @@
+Name=/rag_new2-data-objects-1 Image=registry.community.greenbone.net/community/data-objects Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:13:53.037241057Z FinishedAt=2026-08-19T05:13:39.98497477Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-data-objects-1","data-objects"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"d48e1f9627e8d23f498cbe7f413f679b32066545ac61d06c55f92efb85af137c","Gateway":"172.18.0.1","IPAddress":"172.18.0.12","MacAddress":"7e:1c:8f:2e:dc:71","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-data-objects-1","data-objects","1a8eecf502a4"]}}
+2026-08-19 07:12:56.588691688 +0000 UTC exit= 0 
+2026-08-19 07:13:26.643240208 +0000 UTC exit= 0 
+2026-08-19 07:13:56.747792068 +0000 UTC exit= 0 
+2026-08-19 07:14:26.840149176 +0000 UTC exit= 0 
+2026-08-19 07:14:56.955709803 +0000 UTC exit= 0 
+

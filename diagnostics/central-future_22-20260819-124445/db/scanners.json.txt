@@ -1,0 +1,19 @@
+-[ RECORD 1 ]+--------------------------------------------------------------------------------------------
+jsonb_pretty | {                                                                                          +
+             |     "id": "5ab9f684-813d-4b09-aa62-2b90afaa498d",                                          +
+             |     "url": "agent://local",                                                                +
+             |     "name": "external",                                                                    +
+             |     "status": "active",                                                                    +
+             |     "edition": "openvas",                                                                  +
+             |     "version": "1.0.5",                                                                    +
+             |     "created_at": "2026-08-17T05:43:18.097104+00:00",                                      +
+             |     "updated_at": "2026-08-19T07:15:11.227359+00:00",                                      +
+             |     "api_key_ref": null,                                                                   +
+             |     "capacity_hosts": null,                                                                +
+             |     "connection_mode": "edge_agent",                                                       +
+             |     "agent_token_hash": "cfd25a9d4ac529ce5b943901bdae1a879001d4a0484ecb46cc3c1a449aa15a7a",+
+             |     "agent_token_hint": "5rgI",                                                            +
+             |     "last_heartbeat_at": "2026-08-19T07:15:11.227359+00:00",                               +
+             |     "plugin_feed_updated_at": null                                                         +
+             | }
+

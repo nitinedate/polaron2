@@ -1,0 +1,19 @@
+-[ RECORD 1 ]+-------------------------------------------------------
+jsonb_pretty | {                                                     +
+             |     "id": "ff2aba8b-ad3b-43ab-bd58-5225147eedc3",     +
+             |     "os": null,                                       +
+             |     "mac": null,                                      +
+             |     "case_id": "968f0f99-9dea-4fae-b601-ca3833069b68",+
+             |     "hostname": "192.168.1.11",                       +
+             |     "asset_type": "host",                             +
+             |     "created_at": "2026-08-19T06:21:43.183021+00:00", +
+             |     "primary_ip": "192.168.1.11",                     +
+             |     "risk_score": 0,                                  +
+             |     "updated_at": "2026-08-19T06:21:43.183021+00:00", +
+             |     "criticality": null,                              +
+             |     "lifecycle_state": "active",                      +
+             |     "business_owner_id": null,                        +
+             |     "external_exposure": null,                        +
+             |     "technical_owner_id": null                        +
+             | }
+

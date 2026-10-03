@@ -1,0 +1,7 @@
+Name=/rag_new2-zap-1 Image=zaproxy/zap-stable Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:13:50.259467487Z FinishedAt=2026-08-19T05:13:25.433196228Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-zap-1","zap"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"167ce2c14b11e98c3531a93fb1de2ae03af566b238b12f1a797710187f205659","Gateway":"172.18.0.1","IPAddress":"172.18.0.7","MacAddress":"62:3c:2d:e5:e5:2c","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-zap-1","zap","40622dd34c44"]}}
+2026-08-19 07:12:41.540421153 +0000 UTC exit= 0 {"version":"2.17.0"}
+2026-08-19 07:13:11.693440544 +0000 UTC exit= 0 {"version":"2.17.0"}
+2026-08-19 07:13:41.810353411 +0000 UTC exit= 0 {"version":"2.17.0"}
+2026-08-19 07:14:11.932103557 +0000 UTC exit= 0 {"version":"2.17.0"}
+2026-08-19 07:14:42.032143093 +0000 UTC exit= 0 {"version":"2.17.0"}
+

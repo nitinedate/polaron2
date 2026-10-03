@@ -1,0 +1,5 @@
+Name=/rag_new2-pg-gvm-migrator-1 Image=registry.community.greenbone.net/community/pg-gvm-migrator:stable Status=exited Running=false Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:13:52.022633114Z FinishedAt=2026-08-19T05:13:55.587505631Z Health=unhealthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-pg-gvm-migrator-1","pg-gvm-migrator"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"","Gateway":"","IPAddress":"","MacAddress":"","IPPrefixLen":0,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-pg-gvm-migrator-1","pg-gvm-migrator","493aeedd27b2"]}}
+2026-08-13 07:30:08.379351895 +0000 UTC exit= 1 
+2026-08-17 05:05:43.825380409 +0000 UTC exit= 0 
+2026-08-17 05:05:45.915233019 +0000 UTC exit= 0 
+

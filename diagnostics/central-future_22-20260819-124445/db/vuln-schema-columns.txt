@@ -1,0 +1,329 @@
+        table_name         |        column_name        |        data_type         
+---------------------------+---------------------------+--------------------------
+ vuln_agents               | id                        | uuid
+ vuln_agents               | agent_uuid                | text
+ vuln_agents               | asset_id                  | uuid
+ vuln_agents               | scanner_id                | uuid
+ vuln_agents               | name                      | text
+ vuln_agents               | hostname                  | text
+ vuln_agents               | platform                  | text
+ vuln_agents               | version                   | text
+ vuln_agents               | lifecycle_state           | text
+ vuln_agents               | last_checkin_at           | timestamp with time zone
+ vuln_agents               | last_scan_at              | timestamp with time zone
+ vuln_agents               | policy_name               | text
+ vuln_agents               | link_key_provenance       | text
+ vuln_agents               | error_text                | text
+ vuln_agents               | device_class              | text
+ vuln_agents               | created_at                | timestamp with time zone
+ vuln_agents               | updated_at                | timestamp with time zone
+ vuln_alert_thresholds     | id                        | uuid
+ vuln_alert_thresholds     | metric_key                | text
+ vuln_alert_thresholds     | operator                  | text
+ vuln_alert_thresholds     | threshold_value           | double precision
+ vuln_alert_thresholds     | enabled                   | boolean
+ vuln_alert_thresholds     | last_triggered_at         | timestamp with time zone
+ vuln_alert_thresholds     | created_by                | uuid
+ vuln_alert_thresholds     | created_at                | timestamp with time zone
+ vuln_alert_thresholds     | updated_at                | timestamp with time zone
+ vuln_asset_identifiers    | id                        | uuid
+ vuln_asset_identifiers    | asset_id                  | uuid
+ vuln_asset_identifiers    | id_type                   | text
+ vuln_asset_identifiers    | value                     | text
+ vuln_asset_identifiers    | source                    | text
+ vuln_asset_owners         | id                        | uuid
+ vuln_asset_owners         | asset_id                  | uuid
+ vuln_asset_owners         | owner_role                | text
+ vuln_asset_owners         | owner_user_id             | uuid
+ vuln_asset_owners         | owner_email               | text
+ vuln_asset_owners         | effective_from            | timestamp with time zone
+ vuln_asset_owners         | effective_to              | timestamp with time zone
+ vuln_asset_owners         | source                    | text
+ vuln_asset_owners         | created_at                | timestamp with time zone
+ vuln_assets               | id                        | uuid
+ vuln_assets               | case_id                   | uuid
+ vuln_assets               | hostname                  | text
+ vuln_assets               | primary_ip                | text
+ vuln_assets               | mac                       | text
+ vuln_assets               | os                        | text
+ vuln_assets               | asset_type                | text
+ vuln_assets               | criticality               | text
+ vuln_assets               | business_owner_id         | uuid
+ vuln_assets               | technical_owner_id        | uuid
+ vuln_assets               | risk_score                | double precision
+ vuln_assets               | external_exposure         | text
+ vuln_assets               | lifecycle_state           | text
+ vuln_assets               | created_at                | timestamp with time zone
+ vuln_assets               | updated_at                | timestamp with time zone
+ vuln_asv_attestations     | id                        | uuid
+ vuln_asv_attestations     | submission_id             | uuid
+ vuln_asv_attestations     | attestation_ref           | text
+ vuln_asv_attestations     | attestation_date          | date
+ vuln_asv_attestations     | result_status             | text
+ vuln_asv_attestations     | attestation_document_ref  | text
+ vuln_asv_attestations     | notes                     | text
+ vuln_asv_attestations     | recorded_by               | uuid
+ vuln_asv_attestations     | created_at                | timestamp with time zone
+ vuln_asv_providers        | id                        | uuid
+ vuln_asv_providers        | name                      | text
+ vuln_asv_providers        | accreditation_id          | text
+ vuln_asv_providers        | contact_email             | text
+ vuln_asv_providers        | api_endpoint              | text
+ vuln_asv_providers        | vault_ref                 | text
+ vuln_asv_providers        | status                    | text
+ vuln_asv_providers        | created_at                | timestamp with time zone
+ vuln_asv_providers        | updated_at                | timestamp with time zone
+ vuln_asv_submissions      | id                        | uuid
+ vuln_asv_submissions      | case_id                   | uuid
+ vuln_asv_submissions      | provider_id               | uuid
+ vuln_asv_submissions      | target_scope              | text
+ vuln_asv_submissions      | submission_hash           | text
+ vuln_asv_submissions      | status                    | text
+ vuln_asv_submissions      | disclaimer                | text
+ vuln_asv_submissions      | package_json              | jsonb
+ vuln_asv_submissions      | submitted_at              | timestamp with time zone
+ vuln_asv_submissions      | created_by                | uuid
+ vuln_asv_submissions      | created_at                | timestamp with time zone
+ vuln_asv_submissions      | updated_at                | timestamp with time zone
+ vuln_audit_events         | id                        | uuid
+ vuln_audit_events         | actor_id                  | uuid
+ vuln_audit_events         | action                    | text
+ vuln_audit_events         | resource_type             | text
+ vuln_audit_events         | resource_id               | uuid
+ vuln_audit_events         | details                   | jsonb
+ vuln_audit_events         | created_at                | timestamp with time zone
+ vuln_credential_refs      | id                        | uuid
+ vuln_credential_refs      | name                      | text
+ vuln_credential_refs      | vault_ref                 | text
+ vuln_credential_refs      | credential_type           | text
+ vuln_credential_refs      | privilege_scope           | text
+ vuln_credential_refs      | lifecycle_state           | text
+ vuln_credential_refs      | last_tested_at            | timestamp with time zone
+ vuln_credential_refs      | last_test_result          | text
+ vuln_credential_refs      | rotation_due_at           | timestamp with time zone
+ vuln_credential_refs      | approved_by               | uuid
+ vuln_credential_refs      | created_by                | uuid
+ vuln_credential_refs      | created_at                | timestamp with time zone
+ vuln_credential_refs      | updated_at                | timestamp with time zone
+ vuln_custom_checks        | id                        | uuid
+ vuln_custom_checks        | name                      | text
+ vuln_custom_checks        | check_type                | text
+ vuln_custom_checks        | content_ref               | text
+ vuln_custom_checks        | lifecycle_state           | text
+ vuln_custom_checks        | severity_hint             | text
+ vuln_custom_checks        | cve_hint                  | text
+ vuln_custom_checks        | pci_requirement_tag       | text
+ vuln_custom_checks        | created_by                | uuid
+ vuln_custom_checks        | created_at                | timestamp with time zone
+ vuln_custom_checks        | updated_at                | timestamp with time zone
+ vuln_dashboard_snapshots  | id                        | uuid
+ vuln_dashboard_snapshots  | layer                     | text
+ vuln_dashboard_snapshots  | filter_hash               | text
+ vuln_dashboard_snapshots  | filters_json              | jsonb
+ vuln_dashboard_snapshots  | widgets_json              | jsonb
+ vuln_dashboard_snapshots  | freshness_at              | timestamp with time zone
+ vuln_dashboard_snapshots  | created_by                | uuid
+ vuln_dashboard_snapshots  | created_at                | timestamp with time zone
+ vuln_endpoint_inventory   | id                        | uuid
+ vuln_endpoint_inventory   | agent_id                  | uuid
+ vuln_endpoint_inventory   | asset_id                  | uuid
+ vuln_endpoint_inventory   | case_id                   | uuid
+ vuln_endpoint_inventory   | hostname                  | text
+ vuln_endpoint_inventory   | inventory_json            | jsonb
+ vuln_endpoint_inventory   | packages_count            | integer
+ vuln_endpoint_inventory   | processes_count           | integer
+ vuln_endpoint_inventory   | collected_at              | timestamp with time zone
+ vuln_endpoint_inventory   | created_at                | timestamp with time zone
+ vuln_evidence_packages    | id                        | uuid
+ vuln_evidence_packages    | case_id                   | uuid
+ vuln_evidence_packages    | framework                 | text
+ vuln_evidence_packages    | control_id                | text
+ vuln_evidence_packages    | title                     | text
+ vuln_evidence_packages    | metadata_json             | jsonb
+ vuln_evidence_packages    | integrity_hash            | text
+ vuln_evidence_packages    | period_start              | timestamp with time zone
+ vuln_evidence_packages    | period_end                | timestamp with time zone
+ vuln_evidence_packages    | created_by                | uuid
+ vuln_evidence_packages    | created_at                | timestamp with time zone
+ vuln_exceptions           | id                        | uuid
+ vuln_exceptions           | finding_id                | uuid
+ vuln_exceptions           | requested_by              | uuid
+ vuln_exceptions           | approved_by               | uuid
+ vuln_exceptions           | status                    | text
+ vuln_exceptions           | reason                    | text
+ vuln_exceptions           | compensating_controls     | text
+ vuln_exceptions           | expires_at                | timestamp with time zone
+ vuln_exceptions           | residual_risk             | text
+ vuln_exceptions           | created_at                | timestamp with time zone
+ vuln_exceptions           | updated_at                | timestamp with time zone
+ vuln_finding_correlations | id                        | uuid
+ vuln_finding_correlations | case_id                   | uuid
+ vuln_finding_correlations | correlation_key           | text
+ vuln_finding_correlations | primary_finding_id        | uuid
+ vuln_finding_correlations | engine_count              | integer
+ vuln_finding_correlations | engines_json              | jsonb
+ vuln_finding_correlations | created_at                | timestamp with time zone
+ vuln_finding_correlations | updated_at                | timestamp with time zone
+ vuln_findings             | id                        | uuid
+ vuln_findings             | case_id                   | uuid
+ vuln_findings             | scan_job_id               | uuid
+ vuln_findings             | asset_id                  | uuid
+ vuln_findings             | plugin_id                 | text
+ vuln_findings             | plugin_family             | text
+ vuln_findings             | cve                       | text
+ vuln_findings             | cvss                      | double precision
+ vuln_findings             | severity                  | text
+ vuln_findings             | port                      | integer
+ vuln_findings             | protocol                  | text
+ vuln_findings             | service                   | text
+ vuln_findings             | synopsis                  | text
+ vuln_findings             | remediation               | text
+ vuln_findings             | status                    | text
+ vuln_findings             | enterprise_risk_score     | double precision
+ vuln_findings             | risk_band                 | text
+ vuln_findings             | risk_factors_json         | jsonb
+ vuln_findings             | is_kev                    | boolean
+ vuln_findings             | first_seen_at             | timestamp with time zone
+ vuln_findings             | last_seen_at              | timestamp with time zone
+ vuln_findings             | created_at                | timestamp with time zone
+ vuln_findings             | updated_at                | timestamp with time zone
+ vuln_findings             | exploit_validation_status | text
+ vuln_findings             | exploit_validated_at      | timestamp with time zone
+ vuln_findings             | exploit_validated_by      | uuid
+ vuln_findings             | pci_requirement_tag       | text
+ vuln_findings             | validation_metadata_json  | jsonb
+ vuln_findings             | description               | text
+ vuln_findings             | scan_engine               | text
+ vuln_findings             | correlation_key           | text
+ vuln_notifications        | id                        | uuid
+ vuln_notifications        | channel                   | text
+ vuln_notifications        | event_type                | text
+ vuln_notifications        | title                     | text
+ vuln_notifications        | body                      | text
+ vuln_notifications        | resource_type             | text
+ vuln_notifications        | resource_id               | uuid
+ vuln_notifications        | acknowledged              | boolean
+ vuln_notifications        | created_at                | timestamp with time zone
+ vuln_pentest_findings     | id                        | uuid
+ vuln_pentest_findings     | pentest_job_id            | uuid
+ vuln_pentest_findings     | finding_id                | uuid
+ vuln_pentest_findings     | step_key                  | text
+ vuln_pentest_findings     | target                    | text
+ vuln_pentest_findings     | result_json               | jsonb
+ vuln_pentest_findings     | severity                  | text
+ vuln_pentest_findings     | created_at                | timestamp with time zone
+ vuln_pentest_jobs         | id                        | uuid
+ vuln_pentest_jobs         | case_id                   | uuid
+ vuln_pentest_jobs         | authorization_ref         | text
+ vuln_pentest_jobs         | playbook                  | text
+ vuln_pentest_jobs         | targets_json              | jsonb
+ vuln_pentest_jobs         | status                    | text
+ vuln_pentest_jobs         | findings_count            | integer
+ vuln_pentest_jobs         | error                     | text
+ vuln_pentest_jobs         | started_at                | timestamp with time zone
+ vuln_pentest_jobs         | completed_at              | timestamp with time zone
+ vuln_pentest_jobs         | created_by                | uuid
+ vuln_pentest_jobs         | created_at                | timestamp with time zone
+ vuln_pentest_jobs         | updated_at                | timestamp with time zone
+ vuln_remediation_tasks    | id                        | uuid
+ vuln_remediation_tasks    | finding_id                | uuid
+ vuln_remediation_tasks    | owner_id                  | uuid
+ vuln_remediation_tasks    | sla_due                   | timestamp with time zone
+ vuln_remediation_tasks    | status                    | text
+ vuln_remediation_tasks    | resolution                | text
+ vuln_remediation_tasks    | rescan_job_id             | uuid
+ vuln_remediation_tasks    | accepted_risk_ref         | text
+ vuln_remediation_tasks    | escalation_level          | integer
+ vuln_remediation_tasks    | created_at                | timestamp with time zone
+ vuln_remediation_tasks    | updated_at                | timestamp with time zone
+ vuln_risk_scores          | id                        | uuid
+ vuln_risk_scores          | finding_id                | uuid
+ vuln_risk_scores          | asset_id                  | uuid
+ vuln_risk_scores          | model_version             | text
+ vuln_risk_scores          | enterprise_risk_score     | double precision
+ vuln_risk_scores          | risk_band                 | text
+ vuln_risk_scores          | factors_json              | jsonb
+ vuln_risk_scores          | scored_at                 | timestamp with time zone
+ vuln_scan_engine_runs     | id                        | uuid
+ vuln_scan_engine_runs     | scan_job_id               | uuid
+ vuln_scan_engine_runs     | engine                    | text
+ vuln_scan_engine_runs     | role                      | text
+ vuln_scan_engine_runs     | status                    | text
+ vuln_scan_engine_runs     | started_at                | timestamp with time zone
+ vuln_scan_engine_runs     | completed_at              | timestamp with time zone
+ vuln_scan_engine_runs     | findings_count            | integer
+ vuln_scan_engine_runs     | error                     | text
+ vuln_scan_engine_runs     | metadata_json             | jsonb
+ vuln_scan_engine_runs     | created_at                | timestamp with time zone
+ vuln_scan_jobs            | id                        | uuid
+ vuln_scan_jobs            | case_id                   | uuid
+ vuln_scan_jobs            | policy_id                 | uuid
+ vuln_scan_jobs            | scanner_id                | uuid
+ vuln_scan_jobs            | status                    | text
+ vuln_scan_jobs            | scheduled_at              | timestamp with time zone
+ vuln_scan_jobs            | started_at                | timestamp with time zone
+ vuln_scan_jobs            | completed_at              | timestamp with time zone
+ vuln_scan_jobs            | source                    | text
+ vuln_scan_jobs            | authorization_ref         | text
+ vuln_scan_jobs            | scan_window_start         | timestamp with time zone
+ vuln_scan_jobs            | scan_window_end           | timestamp with time zone
+ vuln_scan_jobs            | external_scan_id          | text
+ vuln_scan_jobs            | preflight_json            | jsonb
+ vuln_scan_jobs            | error                     | text
+ vuln_scan_jobs            | created_at                | timestamp with time zone
+ vuln_scan_jobs            | updated_at                | timestamp with time zone
+ vuln_scan_jobs            | orchestration_json        | jsonb
+ vuln_scan_policies        | id                        | uuid
+ vuln_scan_policies        | case_id                   | uuid
+ vuln_scan_policies        | name                      | text
+ vuln_scan_policies        | policy_type               | text
+ vuln_scan_policies        | scanner_id                | uuid
+ vuln_scan_policies        | settings_json             | jsonb
+ vuln_scan_policies        | compliance_framework      | text
+ vuln_scan_policies        | lifecycle_state           | text
+ vuln_scan_policies        | created_by                | uuid
+ vuln_scan_policies        | created_at                | timestamp with time zone
+ vuln_scan_policies        | updated_at                | timestamp with time zone
+ vuln_scan_results         | id                        | uuid
+ vuln_scan_results         | scan_job_id               | uuid
+ vuln_scan_results         | hosts_attempted           | integer
+ vuln_scan_results         | hosts_assessed            | integer
+ vuln_scan_results         | credential_success_count  | integer
+ vuln_scan_results         | credential_fail_count     | integer
+ vuln_scan_results         | plugin_error_count        | integer
+ vuln_scan_results         | integrity_hash            | text
+ vuln_scan_results         | result_json               | jsonb
+ vuln_scan_results         | completed_at              | timestamp with time zone
+ vuln_scan_results         | created_at                | timestamp with time zone
+ vuln_scan_targets         | id                        | uuid
+ vuln_scan_targets         | scan_job_id               | uuid
+ vuln_scan_targets         | target                    | text
+ vuln_scan_targets         | target_type               | text
+ vuln_scan_targets         | credential_ref            | text
+ vuln_scan_targets         | excluded                  | boolean
+ vuln_scanners             | id                        | uuid
+ vuln_scanners             | name                      | text
+ vuln_scanners             | url                       | text
+ vuln_scanners             | edition                   | text
+ vuln_scanners             | status                    | text
+ vuln_scanners             | api_key_ref               | text
+ vuln_scanners             | plugin_feed_updated_at    | timestamp with time zone
+ vuln_scanners             | last_heartbeat_at         | timestamp with time zone
+ vuln_scanners             | version                   | text
+ vuln_scanners             | capacity_hosts            | integer
+ vuln_scanners             | created_at                | timestamp with time zone
+ vuln_scanners             | updated_at                | timestamp with time zone
+ vuln_scanners             | connection_mode           | text
+ vuln_scanners             | agent_token_hash          | text
+ vuln_scanners             | agent_token_hint          | text
+ vuln_timeline_events      | id                        | uuid
+ vuln_timeline_events      | case_id                   | uuid
+ vuln_timeline_events      | source_type               | text
+ vuln_timeline_events      | source_id                 | uuid
+ vuln_timeline_events      | timestamp_utc             | timestamp with time zone
+ vuln_timeline_events      | event_type                | text
+ vuln_timeline_events      | actor                     | text
+ vuln_timeline_events      | asset_id                  | uuid
+ vuln_timeline_events      | summary                   | text
+(325 rows)
+

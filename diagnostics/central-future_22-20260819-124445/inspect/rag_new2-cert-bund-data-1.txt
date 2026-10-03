@@ -1,0 +1,7 @@
+Name=/rag_new2-cert-bund-data-1 Image=registry.community.greenbone.net/community/cert-bund-data Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:20:21.629363462Z FinishedAt=2026-08-19T05:20:20.656639805Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-cert-bund-data-1","cert-bund-data"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"0d15cbb0f76a4be1143989bd288520c82048775dff594573b20daa49c25c5a94","Gateway":"172.18.0.1","IPAddress":"172.18.0.10","MacAddress":"26:d0:b0:30:84:51","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-cert-bund-data-1","cert-bund-data","813c7ded36af"]}}
+2026-08-19 07:12:50.182252519 +0000 UTC exit= 0 
+2026-08-19 07:13:20.284332292 +0000 UTC exit= 0 
+2026-08-19 07:13:50.357427286 +0000 UTC exit= 0 
+2026-08-19 07:14:20.444979054 +0000 UTC exit= 0 
+2026-08-19 07:14:50.535323237 +0000 UTC exit= 0 
+

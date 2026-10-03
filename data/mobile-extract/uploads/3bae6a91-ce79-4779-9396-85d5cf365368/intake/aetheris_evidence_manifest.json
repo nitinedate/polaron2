@@ -1,0 +1,52 @@
+{
+  "schema_version": "1",
+  "source_id": "SOURCE-ed8199c8019a",
+  "job_id": "3bae6a91-ce79-4779-9396-85d5cf365368",
+  "created_at_utc": "2026-09-22T07:20:17Z",
+  "parser_platform_version": "2.0.0",
+  "acquisition_mode": "import",
+  "mobile_os": "android",
+  "formats": [
+    "pas",
+    "ufd",
+    "ufdx"
+  ],
+  "adapter": "import_ufed",
+  "immutable_original": true,
+  "source_paths": [
+    "/app/data/uploads/3bae6a91-ce79-4779-9396-85d5cf365368/intake/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.pas",
+    "/app/data/uploads/3bae6a91-ce79-4779-9396-85d5cf365368/intake/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.ufd",
+    "/app/data/uploads/3bae6a91-ce79-4779-9396-85d5cf365368/intake/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.ufdx"
+  ],
+  "hashes": [
+    {
+      "path": "/app/data/uploads/3bae6a91-ce79-4779-9396-85d5cf365368/intake/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.pas",
+      "name": "CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.pas",
+      "size": 1346,
+      "sha256": "bc52754f4915d93afadd797529135077f92fa2d66343dcbe24888869e87661c5"
+    },
+    {
+      "path": "/app/data/uploads/3bae6a91-ce79-4779-9396-85d5cf365368/intake/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.ufd",
+      "name": "CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.ufd",
+      "size": 1346,
+      "sha256": "5c7074fca0fc807076a1a505a1d5a1f24b0f33fb74c517421436ff78a6f1b8ad"
+    },
+    {
+      "path": "/app/data/uploads/3bae6a91-ce79-4779-9396-85d5cf365368/intake/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157/CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.ufdx",
+      "name": "CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.ufdx",
+      "size": 1864,
+      "sha256": "afd5b0410fbfbd428d7a0f848506d692c3ae4888f688acae90d78c5e4a282923"
+    }
+  ],
+  "key_material": {
+    "whatsapp_key_present": false,
+    "signal_db_key_present": false,
+    "ios_backup_password_present": false
+  },
+  "device_info": {},
+  "ufdx_extraction_paths": [],
+  "working_copy": {
+    "status": "pending_verify",
+    "note": "Analysis uses extracted working representation after hash verification"
+  }
+}

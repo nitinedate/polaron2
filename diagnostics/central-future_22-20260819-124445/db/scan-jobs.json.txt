@@ -1,0 +1,36 @@
+-[ RECORD 1 ]+-----------------------------------------------------------------
+jsonb_pretty | {                                                               +
+             |     "id": "ddabfb92-3f2b-444b-8289-cf645dd21804",               +
+             |     "error": null,                                              +
+             |     "source": "platform",                                       +
+             |     "status": "completed",                                      +
+             |     "case_id": "968f0f99-9dea-4fae-b601-ca3833069b68",          +
+             |     "policy_id": null,                                          +
+             |     "created_at": "2026-08-19T06:20:48.459932+00:00",           +
+             |     "scanner_id": "5ab9f684-813d-4b09-aa62-2b90afaa498d",       +
+             |     "started_at": "2026-08-19T06:20:55.009299+00:00",           +
+             |     "updated_at": "2026-08-19T06:21:43.183021+00:00",           +
+             |     "completed_at": "2026-08-19T06:21:43.183021+00:00",         +
+             |     "scheduled_at": null,                                       +
+             |     "preflight_json": {                                         +
+             |         "confirmed_at": "2026-08-19T06:20:48.473890+00:00",     +
+             |         "confirmed_by": "b0000000-0000-4000-8000-000000000101", +
+             |         "authorization": true,                                  +
+             |         "targets_validated": true                               +
+             |     },                                                          +
+             |     "scan_window_end": null,                                    +
+             |     "external_scan_id": "12143f78-afe0-4e37-8eb1-13cab3616c4e", +
+             |     "authorization_ref": "CHG-12345 / written authorization ID",+
+             |     "scan_window_start": null,                                  +
+             |     "orchestration_json": {                                     +
+             |         "enabled": false,                                       +
+             |         "edge_agent": true,                                     +
+             |         "scanner_url": "agent://local",                         +
+             |         "edge_progress": {                                      +
+             |             "pct": 100.0,                                       +
+             |             "message": "results uploaded"                       +
+             |         },                                                      +
+             |         "remote_openvas": true                                  +
+             |     }                                                           +
+             | }
+

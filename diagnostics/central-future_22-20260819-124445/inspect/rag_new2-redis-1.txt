@@ -1,0 +1,12 @@
+Name=/rag_new2-redis-1 Image=redis:7 Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:13:52.375671159Z FinishedAt=2026-08-19T05:13:25.58061132Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-redis-1","redis"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"cbbd73f0f493d14dcc745178048882ae3230c1182278a20ec1a97780a1056d79","Gateway":"172.18.0.1","IPAddress":"172.18.0.13","MacAddress":"06:67:5e:a3:52:14","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-redis-1","redis","4c64ba6ebcb3"]}}
+2026-08-19 07:14:34.374037344 +0000 UTC exit= 0 PONG
+
+2026-08-19 07:14:39.530789584 +0000 UTC exit= 0 PONG
+
+2026-08-19 07:14:44.667744177 +0000 UTC exit= 0 PONG
+
+2026-08-19 07:14:49.794913695 +0000 UTC exit= 0 PONG
+
+2026-08-19 07:14:54.982349618 +0000 UTC exit= 0 PONG
+
+

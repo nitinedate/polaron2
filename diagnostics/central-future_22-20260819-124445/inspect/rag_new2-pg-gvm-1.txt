@@ -1,0 +1,12 @@
+Name=/rag_new2-pg-gvm-1 Image=registry.community.greenbone.net/community/pg-gvm:stable Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:14:05.831384485Z FinishedAt=2026-08-19T05:13:35.981103861Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-pg-gvm-1","pg-gvm"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"bb15422bcd172b66d4fcce4f865375d1b88e081c51919b367751605a734f6617","Gateway":"172.18.0.1","IPAddress":"172.18.0.22","MacAddress":"36:e8:4c:a6:a3:fe","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-pg-gvm-1","pg-gvm","5ce76390ee44"]}}
+2026-08-19 07:14:41.108885752 +0000 UTC exit= 0 /var/run/postgresql:5432 - accepting connections
+
+2026-08-19 07:14:46.311190323 +0000 UTC exit= 0 /var/run/postgresql:5432 - accepting connections
+
+2026-08-19 07:14:51.61303234 +0000 UTC exit= 0 /var/run/postgresql:5432 - accepting connections
+
+2026-08-19 07:14:56.770027012 +0000 UTC exit= 0 /var/run/postgresql:5432 - accepting connections
+
+2026-08-19 07:15:01.986100614 +0000 UTC exit= 0 /var/run/postgresql:5432 - accepting connections
+
+

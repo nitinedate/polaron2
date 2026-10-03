@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AetherisEvidenceIndex version="1.0" schema="aetheris.ufdx.v1">
+  <Case id="CASE-20260922-APPLEIPHON" evidence_id="E-608213" />
+  <Extraction run_name="CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157" method="full_file_system" created_utc="2026-09-22T03:33:39.090993+00:00" />
+  <Device os_family="" label="device" serial="" />
+  <Original path="F:\evidence\cases\CASE-20260922-APPLEIPHON\02_Original_Extraction\CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157" />
+  <Inventory summary="WhatsApp artefacts: 44583; SMS/iMessage artefacts: 3; media trees present">
+    <Count category="whatsapp" value="44583" />
+    <Count category="sms_imessage" value="3" />
+    <Count category="media" value="50" />
+    <Count category="android_backup" value="0" />
+    <Count category="ios_backup" value="0" />
+    <Count category="other_app_data" value="0" />
+  </Inventory>
+  <Packages>
+    <Package extension="zip" path="F:\evidence\cases\CASE-20260922-APPLEIPHON\05_Exports\CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157\CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.zip" />
+    <Package extension="ufd" path="F:\evidence\cases\CASE-20260922-APPLEIPHON\05_Exports\CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157\CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.ufd" />
+    <Package extension="pas" path="F:\evidence\cases\CASE-20260922-APPLEIPHON\05_Exports\CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157\CASE-20260922-APPLEIPHON_E-608213_Galaxy_A30s_FFS_20260922_085157.pas" />
+  </Packages>
+  <Notes>
+    Aetheris UFDX index. Not a native Cellebrite UFED project file.
+    Authoritative image = sealed Original folder. Portable transfer = .zip.
+  </Notes>
+</AetherisEvidenceIndex>

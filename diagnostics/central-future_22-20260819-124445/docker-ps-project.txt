@@ -1,0 +1,56 @@
+NAMES                               IMAGE                                                               STATUS                      PORTS
+rag_new2-api-1                      rag_new2-api                                                        Up 2 hours (healthy)        0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+rag_new2-postgres-1                 pgvector/pgvector:pg16                                              Up 2 hours (healthy)        0.0.0.0:5434->5432/tcp, [::]:5434->5432/tcp
+rag_new2-neo4j-1                    neo4j:5                                                             Up 2 hours                  0.0.0.0:7474->7474/tcp, [::]:7474->7474/tcp, 0.0.0.0:7687->7687/tcp, [::]:7687->7687/tcp
+rag_new2-redis-1                    redis:7                                                             Up 2 hours (healthy)        0.0.0.0:6380->6379/tcp, [::]:6380->6379/tcp
+rag_new2-minio-1                    minio/minio:latest                                                  Up 2 hours                  0.0.0.0:9000-9001->9000-9001/tcp, [::]:9000-9001->9000-9001/tcp
+rag_new2-opensearch-1               opensearchproject/opensearch:2                                      Up 2 hours                  0.0.0.0:9200->9200/tcp, [::]:9200->9200/tcp
+rag_new2-ollama-1                   ollama/ollama:latest                                                Up 2 hours (healthy)        0.0.0.0:11434->11434/tcp, [::]:11434->11434/tcp
+rag_new2-mailhog-1                  mailhog/mailhog:v1.0.1                                              Up 2 hours                  0.0.0.0:1025->1025/tcp, [::]:1025->1025/tcp, 0.0.0.0:8025->8025/tcp, [::]:8025->8025/tcp
+rag_new2-certbot-run-91e3617edec8   certbot/certbot:latest                                              Exited (0) 20 hours ago     
+rag_new2-frontend-public-1          rag_new2-frontend                                                   Up 2 hours                  0.0.0.0:80->80/tcp, [::]:80->80/tcp, 0.0.0.0:443->443/tcp, [::]:443->443/tcp
+rag_new2-certbot-run-aef423bcdc6b   certbot/certbot:latest                                              Exited (0) 21 hours ago     
+rag_new2-worker-nessus-1            rag_new2-worker-nessus                                              Up 2 hours                  
+rag_new2-frontend-1                 rag_new2-frontend                                                   Up 2 hours                  0.0.0.0:3001->80/tcp, [::]:3001->80/tcp
+rag_new2-worker-disk-1              rag_new2-worker-disk                                                Up 2 hours                  8080/tcp
+rag_new2-worker-mobile-1            rag_new2-worker-mobile                                              Up 2 hours                  8080/tcp
+rag_new2-worker-report-1            rag_new2-worker-report                                              Up 2 hours                  8080/tcp
+rag_new2-worker-agent-1             rag_new2-worker-agent                                               Up 2 hours                  8080/tcp
+rag_new2-worker-rag-gpu-1           rag_new2-worker-rag-gpu                                             Up 2 hours                  8080/tcp
+rag_new2-pgadmin-1                  dpage/pgadmin4:8                                                    Up 2 hours                  0.0.0.0:5052->80/tcp, [::]:5052->80/tcp
+rag_new2-ollama-init-1              ollama/ollama:latest                                                Exited (0) 2 hours ago      
+rag_new2-certbot-run-10a9b5cfb1cc   certbot/certbot:latest                                              Exited (0) 32 hours ago     
+rag_new2-certbot-run-f044389f075b   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-db9b8ced52b2   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-7fe419def1d5   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-093d31d3b463   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-be7cb7fb973a   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-bb9f17317bd0   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-9ddaf18cb009   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-3936797673f7   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-28862b2b1667   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-certbot-run-f17c7b82e9be   certbot/certbot:latest                                              Exited (0) 44 hours ago     
+rag_new2-acme-bootstrap-1           nginx:1.27-alpine                                                   Exited (128) 44 hours ago   
+rag_new2-gvm-tools-1                registry.community.greenbone.net/community/gvm-tools                Exited (0) 2 hours ago      
+rag_new2-ospd-openvas-1             registry.community.greenbone.net/community/ospd-openvas:stable      Up 2 hours                  
+rag_new2-gvmd-1                     registry.community.greenbone.net/community/gvmd:stable              Up 2 hours (healthy)        
+rag_new2-pg-gvm-1                   registry.community.greenbone.net/community/pg-gvm:stable            Up 2 hours (healthy)        
+rag_new2-openvasd-1                 registry.community.greenbone.net/community/openvas-scanner:stable   Up 2 hours                  
+rag_new2-openvas-1                  registry.community.greenbone.net/community/openvas-scanner:stable   Up 2 hours                  
+rag_new2-report-formats-1           registry.community.greenbone.net/community/report-formats           Up 2 hours (healthy)        
+rag_new2-dfn-cert-data-1            registry.community.greenbone.net/community/dfn-cert-data            Up 2 hours (healthy)        
+rag_new2-redis-gvm-1                registry.community.greenbone.net/community/redis-server             Up 2 hours                  6379/tcp
+rag_new2-configure-openvas-1        registry.community.greenbone.net/community/openvas-scanner:stable   Exited (0) 2 hours ago      
+rag_new2-pg-gvm-migrator-1          registry.community.greenbone.net/community/pg-gvm-migrator:stable   Exited (0) 2 hours ago      
+rag_new2-vulnerability-tests-1      registry.community.greenbone.net/community/vulnerability-tests      Up 2 hours (healthy)        
+rag_new2-scap-data-1                registry.community.greenbone.net/community/scap-data                Up 2 hours (healthy)        
+rag_new2-notus-data-1               registry.community.greenbone.net/community/notus-data               Up 2 hours (healthy)        
+rag_new2-gpg-data-1                 registry.community.greenbone.net/community/gpg-data                 Exited (0) 2 hours ago      
+rag_new2-data-objects-1             registry.community.greenbone.net/community/data-objects             Up 2 hours (healthy)        
+rag_new2-cert-bund-data-1           registry.community.greenbone.net/community/cert-bund-data           Up 2 hours (healthy)        
+rag_new2-gvmd-scanner-setup-1       registry.community.greenbone.net/community/gvmd:stable              Exited (0) 2 hours ago      
+rag_new2-wazuh-manager-1            wazuh/wazuh-manager:4.9.2                                           Up 2 hours                  0.0.0.0:55000->55000/tcp, [::]:55000->55000/tcp
+rag_new2-wazuh-indexer-1            wazuh/wazuh-indexer:4.9.2                                           Up 2 hours                  9200/tcp
+rag_new2-zap-1                      zaproxy/zap-stable                                                  Up 2 hours (healthy)        0.0.0.0:8090->8080/tcp, [::]:8090->8080/tcp
+rag_new2-trivy-1                    aquasec/trivy:0.58.1                                                Up 2 hours (healthy)        0.0.0.0:4954->4954/tcp, [::]:4954->4954/tcp
+rag_new2-nvidia-cuda                nvidia/cuda:12.6.3-base-ubuntu24.04                                 Exited (0) 2 hours ago      

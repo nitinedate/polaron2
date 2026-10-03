@@ -1,0 +1,10 @@
+-[ RECORD 1 ]+-----------------------------------------------------------
+jsonb_pretty | {                                                         +
+             |     "id": "21840285-6e81-47a7-8aa0-1f5e1c4e0d4d",         +
+             |     "target": "192.168.1.11",                             +
+             |     "excluded": false,                                    +
+             |     "scan_job_id": "ddabfb92-3f2b-444b-8289-cf645dd21804",+
+             |     "target_type": "host",                                +
+             |     "credential_ref": null                                +
+             | }
+

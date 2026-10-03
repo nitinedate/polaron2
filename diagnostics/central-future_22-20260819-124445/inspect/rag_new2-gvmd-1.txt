@@ -1,0 +1,7 @@
+Name=/rag_new2-gvmd-1 Image=registry.community.greenbone.net/community/gvmd:stable Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:34:01.549247Z FinishedAt=2026-08-19T05:13:26.535341765Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-gvmd-1","gvmd"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"7ef091143802421cb81a338f10b9bacb47092d7a6528cdf1b4e2b8b65909d585","Gateway":"172.18.0.1","IPAddress":"172.18.0.35","MacAddress":"02:6c:eb:d1:3d:0b","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-gvmd-1","gvmd","371a50464132"]}}
+2026-08-19 07:12:41.567303772 +0000 UTC exit= 0 <get_version_response status="200" status_text="OK"><version>22.7</version></get_version_response>
+2026-08-19 07:13:11.714998289 +0000 UTC exit= 0 <get_version_response status="200" status_text="OK"><version>22.7</version></get_version_response>
+2026-08-19 07:13:41.818195564 +0000 UTC exit= 0 <get_version_response status="200" status_text="OK"><version>22.7</version></get_version_response>
+2026-08-19 07:14:11.93771812 +0000 UTC exit= 0 <get_version_response status="200" status_text="OK"><version>22.7</version></get_version_response>
+2026-08-19 07:14:42.039997405 +0000 UTC exit= 0 <get_version_response status="200" status_text="OK"><version>22.7</version></get_version_response>
+

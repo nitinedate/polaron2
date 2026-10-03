@@ -1,0 +1,7 @@
+Name=/rag_new2-report-formats-1 Image=registry.community.greenbone.net/community/report-formats Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:14:32.963268887Z FinishedAt=2026-08-19T05:13:35.890901715Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-report-formats-1","report-formats"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"4f1c07170b792aaa55d04ae15912f693e3dcb0e12e118fadf6f8c2d3510a7849","Gateway":"172.18.0.1","IPAddress":"172.18.0.21","MacAddress":"da:7f:8a:f6:0d:ee","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-report-formats-1","report-formats","35df40ee880f"]}}
+2026-08-19 07:13:03.173123374 +0000 UTC exit= 0 
+2026-08-19 07:13:33.287951774 +0000 UTC exit= 0 
+2026-08-19 07:14:03.401323977 +0000 UTC exit= 0 
+2026-08-19 07:14:33.516156689 +0000 UTC exit= 0 
+2026-08-19 07:15:03.650656017 +0000 UTC exit= 0 
+

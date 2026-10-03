@@ -1,0 +1,60 @@
+# -----------------------------------------------------------------------------
+# Polaron - local/runtime data that must not be committed
+# -----------------------------------------------------------------------------
+
+# Forensic evidence / case payloads (explicitly requested)
+/evidence/
+/evidence/**
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Node / frontend build outputs
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+
+# Local environment / secrets
+.env
+.env.*.local
+*.local
+!.env.example
+
+# Logs and runtime state
+*.log
+logs/
+*.pid
+*.pid.lock
+celerybeat-schedule*
+
+# Temporary / cache files
+.tmp/
+tmp/
+*.tmp
+*.temp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local database / backup exports
+*.dump
+*.sql.gz
+*.bak
+*.backup
+
+# IDE
+.idea/
+.vscode/

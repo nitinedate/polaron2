@@ -1,0 +1,37 @@
+﻿AGENT_TOKEN single-token deploy package
+=======================================
+Do not copy any .env (tokens stay on the machine).
+
+1) Central (this stack / office server at 122.170.114.36)
+   Copy into the Aetheris repo root, overwriting:
+     backend/app/services/scanner_agent_auth.py
+     backend/app/routers/vuln.py
+     backend/scripts/bind_laptop_edge_scanner.py
+     frontend/src/pages/vuln/ScannersPage.tsx
+
+   Then:
+     docker compose up -d --no-deps --force-recreate api
+     docker compose up -d --build frontend
+
+   Auth change: one AGENT_TOKEN only (no recovery/rotate pair).
+   X-Tenant "aetheris" maps to the single active firm if that slug is missing.
+   After recreate, bind the existing laptop token (does not print secrets):
+
+     docker cp <laptop-scanner>\.env <api-container>:/tmp/laptop.env
+     docker compose exec -T api python /app/scripts/bind_laptop_edge_scanner.py --env /tmp/laptop.env
+     docker compose exec -T api rm -f /tmp/laptop.env
+
+2) Laptop (E:\laptop-scanner)
+   Copy into E:\laptop-scanner, overwriting:
+     scripts\start-laptop.ps1
+     scripts\aetheris-auth-preflight-v124.ps1
+     scanner-agent\agent\api_client.py
+     docker-compose.yml
+     .env.example   (reference only)
+
+   In .env keep a single AGENT_TOKEN. Leave AGENT_RECOVERY_TOKEN empty.
+   TENANT_SLUG must match the firm on CENTRAL_API_URL
+     (this PC's DB is slug "a"; public 122.170.114.36 uses "aetheris").
+   Recreate the agent after copy:
+     docker compose up -d --no-deps --force-recreate scanner-agent
+     Start-Laptop.cmd

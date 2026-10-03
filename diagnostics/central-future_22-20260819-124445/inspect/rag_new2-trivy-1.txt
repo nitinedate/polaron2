@@ -1,0 +1,37 @@
+Name=/rag_new2-trivy-1 Image=aquasec/trivy:0.58.1 Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:13:51.700533622Z FinishedAt=2026-08-19T05:13:25.042799991Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-trivy-1","trivy"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"00c10746814789dedc632938542e7aac27e8a37f97b7f6e4cf5ba98b3c18448d","Gateway":"172.18.0.1","IPAddress":"172.18.0.11","MacAddress":"22:b3:f8:84:20:c6","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-trivy-1","trivy","eb918cf21694"]}}
+2026-08-19 07:12:52.38165559 +0000 UTC exit= 0 Version: 0.58.1
+Vulnerability DB:
+  Version: 2
+  UpdatedAt: 2026-08-19 00:49:40.715013262 +0000 UTC
+  NextUpdate: 2026-08-20 00:49:40.715013032 +0000 UTC
+  DownloadedAt: 2026-08-19 05:22:09.05038161 +0000 UTC
+
+2026-08-19 07:13:22.562228563 +0000 UTC exit= 0 Version: 0.58.1
+Vulnerability DB:
+  Version: 2
+  UpdatedAt: 2026-08-19 00:49:40.715013262 +0000 UTC
+  NextUpdate: 2026-08-20 00:49:40.715013032 +0000 UTC
+  DownloadedAt: 2026-08-19 05:22:09.05038161 +0000 UTC
+
+2026-08-19 07:13:52.779882462 +0000 UTC exit= 0 Version: 0.58.1
+Vulnerability DB:
+  Version: 2
+  UpdatedAt: 2026-08-19 00:49:40.715013262 +0000 UTC
+  NextUpdate: 2026-08-20 00:49:40.715013032 +0000 UTC
+  DownloadedAt: 2026-08-19 05:22:09.05038161 +0000 UTC
+
+2026-08-19 07:14:22.950914491 +0000 UTC exit= 0 Version: 0.58.1
+Vulnerability DB:
+  Version: 2
+  UpdatedAt: 2026-08-19 00:49:40.715013262 +0000 UTC
+  NextUpdate: 2026-08-20 00:49:40.715013032 +0000 UTC
+  DownloadedAt: 2026-08-19 05:22:09.05038161 +0000 UTC
+
+2026-08-19 07:14:53.236722812 +0000 UTC exit= 0 Version: 0.58.1
+Vulnerability DB:
+  Version: 2
+  UpdatedAt: 2026-08-19 00:49:40.715013262 +0000 UTC
+  NextUpdate: 2026-08-20 00:49:40.715013032 +0000 UTC
+  DownloadedAt: 2026-08-19 05:22:09.05038161 +0000 UTC
+
+

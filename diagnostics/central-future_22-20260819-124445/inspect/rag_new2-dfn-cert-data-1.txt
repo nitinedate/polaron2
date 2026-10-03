@@ -1,0 +1,7 @@
+Name=/rag_new2-dfn-cert-data-1 Image=registry.community.greenbone.net/community/dfn-cert-data Status=running Running=true Restarting=false OOMKilled=false ExitCode=0 RestartCount=0 StartedAt=2026-08-19T05:14:39.956362084Z FinishedAt=2026-08-19T05:13:35.890900815Z Health=healthy Networks={"rag_new2_default":{"IPAMConfig":null,"Links":null,"Aliases":["rag_new2-dfn-cert-data-1","dfn-cert-data"],"DriverOpts":null,"GwPriority":0,"NetworkID":"c4c229a8f7d965a7eaba4907235df9ea2b3cf54334f5ee9182022d8549457315","EndpointID":"e0ae7b03b9a6e7699c877c0ac647754c573120563034458a5f6b128e91d0a689","Gateway":"172.18.0.1","IPAddress":"172.18.0.27","MacAddress":"0e:29:97:3d:9d:da","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["rag_new2-dfn-cert-data-1","dfn-cert-data","e829a6893747"]}}
+2026-08-19 07:12:45.935726834 +0000 UTC exit= 0 
+2026-08-19 07:13:16.038801621 +0000 UTC exit= 0 
+2026-08-19 07:13:46.121591321 +0000 UTC exit= 0 
+2026-08-19 07:14:16.189070571 +0000 UTC exit= 0 
+2026-08-19 07:14:46.273793666 +0000 UTC exit= 0 
+
