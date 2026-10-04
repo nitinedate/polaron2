@@ -245,7 +245,7 @@ def cap_parallelism(kind: str, requested: int, *, min_workers: int = 1, snapshot
     if kind in {"mobile", "mobile_readers", "mobile_extract"}:
         profile_cap = {"tight": 3, "laptop": 12, "desktop": 14, "workstation": 16}.get(profile, 8)
     elif kind in {"disk", "disk_readers", "ewf"}:
-        profile_cap = {"tight": 2, "laptop": 8, "desktop": 10, "workstation": 12}.get(profile, 6)
+        profile_cap = {"tight": 2, "laptop": 12, "desktop": 14, "workstation": 16}.get(profile, 8)
     elif kind in {"parse", "parse_workers"}:
         profile_cap = {"tight": 2, "laptop": 8, "desktop": 12, "workstation": 16}.get(profile, 8)
     elif kind in {"inventory", "inventory_workers"}:

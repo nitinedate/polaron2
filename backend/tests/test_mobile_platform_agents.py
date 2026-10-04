@@ -166,3 +166,32 @@ def test_iosagent_starts_extract_not_inventory_when_zero_files():
     assert votes["iosagent"]["want"] == "run"
     assert votes["iosagent"]["dispatch_action"] == "resume_extraction"
     assert votes["iosagent"]["dispatch_agent"] == "extract_agent"
+
+
+def test_only_the_owning_product_runs_the_job():
+    from unittest.mock import patch
+
+    from app.services.mobile_platform_agents import current_service_owns_job
+
+    android = {"type": "android_mobile", "disk_source": {"mobile_os": "android"}}
+    disk = {"type": "disk_image", "disk_source": {}}
+    with patch("app.db.sql_helpers.fetchone", return_value=android), patch(
+        "app.service_identity.current_service", return_value="forensic"
+    ):
+        assert current_service_owns_job(object(), "job-1") is False
+    with patch("app.db.sql_helpers.fetchone", return_value=android), patch(
+        "app.service_identity.current_service", return_value="mobile-ios"
+    ):
+        assert current_service_owns_job(object(), "job-1") is False
+    with patch("app.db.sql_helpers.fetchone", return_value=android), patch(
+        "app.service_identity.current_service", return_value="mobile-android"
+    ):
+        assert current_service_owns_job(object(), "job-1") is True
+    with patch("app.db.sql_helpers.fetchone", return_value=disk), patch(
+        "app.service_identity.current_service", return_value="forensic"
+    ):
+        assert current_service_owns_job(object(), "job-1") is True
+    with patch("app.db.sql_helpers.fetchone", return_value=disk), patch(
+        "app.service_identity.current_service", return_value="mobile-android"
+    ):
+        assert current_service_owns_job(object(), "job-1") is False

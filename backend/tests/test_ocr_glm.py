@@ -316,6 +316,25 @@ def test_cpu_prepare_skips_blank_image() -> None:
     assert prep["engine"] in ("blank", "tiny")
 
 
+def test_cpu_prepare_skips_clear_color_photo() -> None:
+    import io
+
+    from PIL import Image
+
+    img = Image.linear_gradient("L").convert("RGB").resize((320, 240))
+    pixels = img.load()
+    for y in range(240):
+        for x in range(320):
+            pixels[x, y] = ((x * 3) % 256, (y * 5) % 256, (x + y) % 256)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    prep = ocr_gpu.cpu_prepare_ocr_item(
+        buf.getvalue(), path="Users/a/Documents/holiday.png", allow_photos=True
+    )
+    assert prep["status"] == "skip"
+    assert prep["engine"] == "blank"
+
+
 def test_cpu_prepare_scan_like_image_needs_glm() -> None:
     import io
 

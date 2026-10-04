@@ -127,12 +127,21 @@ def build_live_plan(
 
     # Cool → use ceiling; warm → scale down (never above ceiling).
     pace = min(cpu_pace, gpu_pace if gpu_pace > 0 else 0.25)
+    cpus = 8
+    if snap is not None:
+        cpus = max(int(getattr(snap, "cpu_logical", 0) or 0), 1)
+    if cpus <= 1:
+        cpus = max(int(os.cpu_count() or 8), 1)
+    # Keep two cores for the database and the API. Cap at 16 so a single
+    # disk image is not thrashed by one reader per core.
+    io_hw = min(16, max(4, cpus - 2))
     if too_hot:
         rag_batch = 2
         ocr_batch = max(4, min(ocr_ceil, 8))
         parse_workers = 1
         inv_workers = 1
-        mobile_workers = 1
+        mobile_workers = 2
+        disk_workers = 2
         notes.append("thermal_abort_band — minimal batches")
     elif pace >= 0.95:
         rag_batch = rag_ceil
@@ -140,28 +149,31 @@ def build_live_plan(
         parse_workers = parse_ceil
         inv_workers = inv_ceil
         mobile_workers = mobile_ceil
+        disk_workers = disk_ceil
         notes.append("cool_path — full configured ceilings")
     elif pace >= 0.55:
         rag_batch = max(2, int(rag_ceil * 0.75))
         ocr_batch = max(8, int(ocr_ceil * 0.75))
         parse_workers = max(1, int(parse_ceil * 0.75))
         inv_workers = max(2, int(inv_ceil * 0.75))
-        mobile_workers = max(1, min(mobile_ceil, 2))
+        mobile_workers = max(4, int(mobile_ceil * 0.75))
+        disk_workers = max(4, int(disk_ceil * 0.75))
         notes.append("warm_path — scaled batches")
     else:
         rag_batch = max(2, int(rag_ceil * 0.40))
         ocr_batch = max(4, int(ocr_ceil * 0.40))
         parse_workers = max(1, int(parse_ceil * 0.40))
         inv_workers = max(1, int(inv_ceil * 0.40))
-        mobile_workers = 1
+        mobile_workers = max(2, int(mobile_ceil * 0.40))
+        disk_workers = max(2, int(disk_ceil * 0.40))
         notes.append("hot_path — aggressive backoff")
 
     rag_batch = _clamp_int(rag_batch, 1, rag_ceil)
     ocr_batch = _clamp_int(ocr_batch, 2, ocr_ceil)
     parse_workers = _clamp_int(parse_workers, 1, parse_ceil)
     inv_workers = _clamp_int(inv_workers, 1, inv_ceil)
-    mobile_workers = _clamp_int(mobile_workers, 1, min(mobile_ceil, 3))
-    disk_workers = _clamp_int(disk_ceil, 1, 8)
+    mobile_workers = _clamp_int(mobile_workers, 1, min(mobile_ceil, io_hw))
+    disk_workers = _clamp_int(disk_workers, 1, min(disk_ceil, io_hw))
     rag_cap = _clamp_int(max(rag_batch, rag_cap_ceil), rag_batch, rag_cap_ceil)
 
     # Baseline used to unlock graph/inventory/parse in parallel with RAG.  On a

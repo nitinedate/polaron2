@@ -216,6 +216,35 @@ def owner_agent_for_job(db, job_id: str) -> str | None:
     return owner_agent_id(mobile_os_family_from_job_row(row))
 
 
+def current_service_owns_job(db, job_id: str) -> bool:
+    """True when this process is the product that should run the job.
+
+    Disk, Android, and iOS share one firm database, so each product's supervisor
+    can see the others' jobs. Only the owning product may dispatch work.
+    """
+    from app.db.sql_helpers import fetchone
+    from app.service_identity import (
+        FORENSIC,
+        MOBILE_ANDROID,
+        MOBILE_EXTRACT,
+        MOBILE_IOS,
+        current_service,
+    )
+
+    row = fetchone(db, "SELECT type, disk_source FROM jobs WHERE id=:jid", {"jid": job_id})
+    family = mobile_os_family_from_job_row(row)
+    svc = current_service()
+    if svc == MOBILE_ANDROID:
+        return family == "android"
+    if svc == MOBILE_IOS:
+        return family == "ios"
+    if svc == MOBILE_EXTRACT:
+        return family in {"android", "ios"}
+    if svc == FORENSIC:
+        return family is None
+    return family is None
+
+
 def assert_agent_owns_job(db, job_id: str, agent_id: str) -> str:
     """Return the owner id, or raise if this agent is the wrong platform."""
     wanted = platform_for_agent(agent_id)

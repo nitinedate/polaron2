@@ -717,8 +717,16 @@ def decide_huddle_actions(db, job_id: str, snap: dict[str, Any], *, gpu_abort: b
         )
 
     inv = snap.get("inventory") or {}
+    artifacts_ready = False
+    try:
+        from app.services.catalog_artifact_runner import artifacts_ready_for_inventory
+
+        artifacts_ready, _wait_reason = artifacts_ready_for_inventory(db, job_id)
+    except Exception:
+        artifacts_ready = False
     if (
-        int(inv.get("total") or 0) > 0
+        artifacts_ready
+        and int(inv.get("total") or 0) > 0
         and not inv.get("done")
         and not snap.get("inventory_inflight")
         and status in ("indexing", "indexed", "parsed", "artifacts_registered")

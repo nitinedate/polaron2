@@ -5,6 +5,8 @@
 # Forensic evidence / case payloads (explicitly requested)
 /evidence/
 /evidence/**
+/ap/
+/ap/**
 
 # Python
 __pycache__/

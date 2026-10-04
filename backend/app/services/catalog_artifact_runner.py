@@ -102,16 +102,75 @@ def _min_artifacts_for_inventory(db, job_id: str) -> int:
     return _MIN_ARTIFACTS_FOR_INVENTORY
 
 
+# Statuses that mean files are still being copied or have not been registered yet.
+_PRE_INVENTORY_STATUSES = frozenset({
+    "created",
+    "registered",
+    "awaiting_segments",
+    "processing",
+    "building_disk",
+    "extracting",
+    "disk_ready",
+    "paused",
+    "failed",
+})
+# Pipeline phases where materialize has already handed off a stable artifact table.
+_POST_MATERIALIZE_PHASES = frozenset({
+    "parse",
+    "ocr",
+    "rag",
+    "rag_index",
+    "artifact_inventory",
+    "axiom_artifacts",
+    "graph",
+    "complete",
+    "report",
+})
+
+
+def _job_pipeline_state(db, job_id: str) -> tuple[str, str]:
+    try:
+        row = fetchone(
+            db,
+            "SELECT status, pipeline_progress FROM jobs WHERE id=:id",
+            {"id": job_id},
+        )
+    except Exception:
+        return "", ""
+    if not row:
+        return "", ""
+    status = str(row.get("status") or "").lower()
+    pp = row.get("pipeline_progress") or {}
+    if isinstance(pp, str):
+        try:
+            pp = json.loads(pp)
+        except json.JSONDecodeError:
+            pp = {}
+    phase = str((pp or {}).get("phase") or "") if isinstance(pp, dict) else ""
+    return status, phase
+
+
 def artifacts_ready_for_inventory(db, job_id: str) -> tuple[bool, str]:
-    """Gate inventory until job_artifacts are actually materialized."""
+    """Gate inventory until job_artifacts are actually materialized.
+
+    A disk extract starts with zero rows. That is expected, not a failure: inventory
+    on an empty table persists hollow zeros. The bulk floor (500) only applies while
+    materialize is still filling the table. Once that phase has finished, a smaller
+    image is inventoried from whatever was registered.
+    """
     art_n = materialized_artifact_count(db, job_id)
     min_n = _min_artifacts_for_inventory(db, job_id)
-    if art_n < min_n:
-        return False, f"artifacts_not_ready ({art_n:,} < {min_n:,})"
-    if parse_pending_count(db, job_id) > 0:
-        # Allow inventory while parse drains — but only after materialize volume is present.
-        pass
-    return True, f"ready ({art_n:,} artifacts)"
+    if art_n >= min_n:
+        return True, f"ready ({art_n:,} artifacts)"
+    status, phase = _job_pipeline_state(db, job_id)
+    materialize_settled = art_n > 0 and (
+        status not in _PRE_INVENTORY_STATUSES
+        and status not in ("", "indexing", "extracted")
+        or phase in _POST_MATERIALIZE_PHASES
+    )
+    if materialize_settled:
+        return True, f"ready ({art_n:,} artifacts)"
+    return False, f"waiting_for_artifacts ({art_n:,} < {min_n:,})"
 
 
 # Per-process cache: never re-run ALTER once a firm schema is known-good.
@@ -1037,12 +1096,15 @@ def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = N
 
     ready, ready_reason = artifacts_ready_for_inventory(db, job_id)
     if not ready:
-        write_disk_log(
-            db,
-            job_id,
-            f"Artifact inventory deferred — {ready_reason}",
-            stage=INVENTORY_STAGE,
-        )
+        # Extraction / materialize has not registered files yet. Stay quiet so the
+        # disk log is not filled with a warning on every worker retry.
+        if not str(ready_reason).startswith("waiting_for_artifacts"):
+            write_disk_log(
+                db,
+                job_id,
+                f"Artifact inventory deferred — {ready_reason}",
+                stage=INVENTORY_STAGE,
+            )
         try:
             db.commit()
         except Exception:
@@ -2048,13 +2110,16 @@ def queue_axiom_artifact_inventory(db, job_id: str, *, schema_name: str) -> dict
     ready, ready_reason = artifacts_ready_for_inventory(db, job_id)
     if not ready:
         inv = axiom_inventory_progress(db, job_id)
-        write_disk_log(
-            db,
-            job_id,
-            f"Artifact inventory not queued — {ready_reason}",
-            stage=INVENTORY_STAGE,
-            level="warning",
-        )
+        # Zero (or still-growing) job_artifacts during disk extract is normal.
+        # Do not write a warning the UI treats as a job failure.
+        if not str(ready_reason).startswith("waiting_for_artifacts"):
+            write_disk_log(
+                db,
+                job_id,
+                f"Artifact inventory not queued — {ready_reason}",
+                stage=INVENTORY_STAGE,
+                level="warning",
+            )
         return {"queued_axiom_inventory": False, "reason": ready_reason, **inv}
     if parse_pending_count(db, job_id) > 0:
         inv = axiom_inventory_progress(db, job_id)

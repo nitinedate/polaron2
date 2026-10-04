@@ -40,4 +40,6 @@ def test_parse_worker_is_part_of_dynamic_remount_target():
     refresh = read("scripts/refresh-drive-mounts-job.ps1")
     generator = read("scripts/generate-drive-mounts.ps1")
     assert "@('api', 'worker-disk', 'worker-parse', 'worker-report', 'worker-agent')" in refresh
+    assert "aetheris-mobile-android" in refresh
+    assert "@('api', 'worker-build', 'worker-parse')" in refresh
     assert "@('api', 'worker-disk', 'worker-parse', 'worker-mobile', 'worker-report', 'worker-agent')" in generator

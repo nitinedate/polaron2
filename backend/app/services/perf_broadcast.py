@@ -103,7 +103,7 @@ def live_extract_mobile_workers(default: int) -> int:
 
 def live_extract_disk_workers(default: int) -> int:
     plan = get_live_perf_plan()
-    return _int_from_plan(plan, "extract_disk_workers", default, lo=1, hi=8)
+    return _int_from_plan(plan, "extract_disk_workers", default, lo=1, hi=16)
 
 
 def live_defer_background_rag() -> bool:

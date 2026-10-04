@@ -3,6 +3,23 @@ from types import SimpleNamespace
 from app.services.extracted_disk import plan_ewf_extract_io, plan_mobile_extract_io
 
 
+def test_ewf_uses_more_readers_on_a_22_core_host():
+    nodes = [{"path": f"windows/system32/{i:05d}.dll"} for i in range(20000)]
+    readers, shards, reason = plan_ewf_extract_io(
+        nodes,
+        configured_workers=12,
+        configured_shards=14,
+        live_workers=12,
+        thermal_pace=1.0,
+        busy_extracts=1,
+        cpu_count=22,
+        stream_phase3=True,
+    )
+    assert readers >= 12
+    assert shards >= readers
+    assert reason.startswith("ewf_parallel")
+
+
 def test_ewf_can_use_eight_readers_on_large_hosts():
     nodes = [{"path": f"windows/system32/{i:05d}.dll"} for i in range(12000)]
     readers, shards, reason = plan_ewf_extract_io(

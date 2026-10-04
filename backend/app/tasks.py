@@ -1320,6 +1320,14 @@ def _ocr_drain_locked(
     import json
 
     with firm_session(schema_name) as db:
+        from app.services.job_control import is_stop_requested
+        from app.services.mobile_platform_agents import current_service_owns_job
+
+        if is_stop_requested(db, job_id):
+            return {"status": "stopped", "reason": "stop_requested", "ocr_count": 0, "pending_left": 0}
+        if not current_service_owns_job(db, job_id):
+            log.info("OCR drain skipped — another product owns job=%s", job_id)
+            return {"status": "skipped", "reason": "other_product", "ocr_count": 0, "pending_left": 0}
         # Image-evidence jobs stay parse-then-OCR. Forensic disks OCR in parallel
         # as soon as eligible PDFs/images are materialized.
         try:
@@ -1462,6 +1470,15 @@ def _ocr_drain_locked(
         is_cpu_bucket = ocr_bucket is not None
         max_rounds = max(int(getattr(settings, "ocr_drain_max_rounds", 25) or 25), 1)
         for round_i in range(max_rounds):
+            if is_stop_requested(db, job_id):
+                write_disk_log(
+                    db,
+                    job_id,
+                    "OCR stopped — pipeline halt kept the last checkpoint",
+                    stage="ocr",
+                )
+                db.commit()
+                return {"status": "stopped", "reason": "stop_requested", "ocr_count": total_done, "pending_left": 0}
             try:
                 result = run_ocr_for_job(
                     db,

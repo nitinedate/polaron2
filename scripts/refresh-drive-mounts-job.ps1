@@ -136,6 +136,12 @@ function Set-RemountTarget {
         $script:RemountServices = @('api', 'worker-disk', 'worker-parse', 'worker-report', 'worker-agent')
         return
     }
+    if ($name -eq 'aetheris-mobile-android' -or $name -eq 'aetheris-mobile-ios') {
+        $leaf = if ($name -eq 'aetheris-mobile-android') { 'mobile-android' } else { 'mobile-ios' }
+        $script:ComposeDrivesFile = Join-Path $Root "docker-compose.drives.$leaf.yml"
+        $script:RemountServices = @('api', 'worker-build', 'worker-parse')
+        return
+    }
     if ($name -eq 'aetheris-mobile-extract') {
         $script:ComposeDrivesFile = Join-Path $Root "docker-compose.drives.mobile.yml"
         $script:RemountServices = @('api', 'worker-mobile')
@@ -743,6 +749,71 @@ function Test-WslDriveSource {
     catch { return $false }
 }
 
+function Test-ComposeProjectRunning {
+    param([Parameter(Mandatory = $true)][string]$Project)
+    $probe = Invoke-NativeCapture -FilePath 'docker' -ArgumentList @(
+        'ps', '-q',
+        '--filter', "label=com.docker.compose.project=$Project"
+    )
+    return ($probe.ExitCode -eq 0 -and ("$($probe.Text)").Trim())
+}
+
+function Update-SiblingProductDriveMounts {
+    param(
+        [string[]]$Required = @(),
+        [string[]]$Excluded = @(),
+        [ValidateSet('Windows', 'Wsl')][string]$ExecutionMode = 'Windows'
+    )
+    # Phone extraction runs in its own Compose project. Refreshing only the
+    # forensic API leaves that worker on the previous mounts, so it reports
+    # "missing /host/<letter>" for a folder Windows can already list.
+    $products = @(
+        @{
+            Project  = 'aetheris-mobile-android'
+            Compose  = Join-Path $Root 'services\mobile-android\docker-compose.yml'
+            Drives   = Join-Path $Root 'docker-compose.drives.mobile-android.yml'
+            Services = @('api', 'worker-build', 'worker-parse')
+        },
+        @{
+            Project  = 'aetheris-mobile-ios'
+            Compose  = Join-Path $Root 'services\mobile-ios\docker-compose.yml'
+            Drives   = Join-Path $Root 'docker-compose.drives.mobile-ios.yml'
+            Services = @('api', 'worker-build', 'worker-parse')
+        },
+        @{
+            Project  = 'aetheris-mobile-extract'
+            Compose  = Join-Path $Root 'services\mobile-extract\docker-compose.yml'
+            Drives   = Join-Path $Root 'docker-compose.drives.mobile.yml'
+            Services = @('api', 'worker-mobile')
+        }
+    )
+    $savedServices = @($script:RemountServices)
+    try {
+        foreach ($product in $products) {
+            if ($product.Project -eq $script:ComposeProject) { continue }
+            if (-not (Test-Path -LiteralPath $product.Compose)) { continue }
+            if (-not (Test-ComposeProjectRunning -Project $product.Project)) { continue }
+            $script:RemountServices = @($product.Services)
+            Invoke-DriveGenerator -Required $Required -Excluded $Excluded -ExecutionMode $ExecutionMode -OutputPath $product.Drives | Out-Null
+            $cargs = @(
+                'compose', '-p', $product.Project,
+                '--project-directory', $script:ComposeWorkingDir,
+                '-f', $product.Compose,
+                '-f', $product.Drives,
+                'up', '-d', '--no-deps', '--force-recreate'
+            ) + @($product.Services)
+            $up = Invoke-NativeCapture -FilePath 'docker' -ArgumentList $cargs
+            if ($up.ExitCode -ne 0) {
+                throw "Drive remount failed for $($product.Project): $($up.Output -join ' ')"
+            }
+            Write-Host "Remounted host drives into $($product.Project): $($product.Services -join ', ')"
+        }
+    }
+    finally {
+        $script:RemountServices = $savedServices
+    }
+}
+
 function Recreate-ForensicServices {
     param([string]$WslDistro = "")
 
@@ -1013,6 +1084,7 @@ try {
             }
 
             $composeOutput = @(Recreate-ForensicServices -WslDistro $wslDistro)
+            Update-SiblingProductDriveMounts -Required @($letters) -Excluded @($excluded) -ExecutionMode $(if ($wslDistro) { 'Wsl' } else { 'Windows' })
             Write-Status @{
                 status  = 'running'
                 ok      = $null
@@ -1082,6 +1154,7 @@ try {
                 }
                 $letters = @($final.letters)
                 $composeOutput2 = @(Recreate-ForensicServices -WslDistro $wslDistro)
+                Update-SiblingProductDriveMounts -Required @($letters) -Excluded @($excluded) -ExecutionMode $(if ($wslDistro) { 'Wsl' } else { 'Windows' })
                 if (-not (Wait-ApiHealthy)) {
                     throw 'API did not become healthy after WSL bridge remount.'
                 }

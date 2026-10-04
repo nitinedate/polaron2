@@ -452,7 +452,16 @@ def plan_ewf_extract_io(
     n = max(len(nodes), 1)
     reason = "ewf_parallel"
 
-    hi = 8 if usable >= 8 else 4
+    # Leave two cores for Postgres, MinIO, and the API. A 22-core host can
+    # run more than eight EWF readers; the old ceiling left most CPUs idle.
+    if usable >= 16:
+        hi = 14
+    elif usable >= 10:
+        hi = 12
+    elif usable >= 8:
+        hi = 8
+    else:
+        hi = 4
     readers = min(max(wanted, 2), hi, usable, n)
     if float(thermal_pace) < 0.40:
         readers = max(1, readers // 2)
@@ -504,11 +513,11 @@ def plan_mobile_extract_io(
     n = max(len(nodes), 1)
 
     if _is_plain_folder_extract(vd, nodes):
-        readers = min(max(wanted, 8), 16, cpus, n)
+        readers = min(max(wanted, 8), 16, max(cpus - 2, 4), n)
         shards = min(max(readers, 8), 16, n)
         reason = "plain_folder"
     elif _is_payload_zip_extract(nodes):
-        readers = min(max(wanted, 8), 16, cpus, n)
+        readers = min(max(wanted, 8), 16, max(cpus - 2, 4), n)
         shards = min(max(readers, 8), 16, n)
         reason = "zip_payload_parallel"
     else:
@@ -823,7 +832,9 @@ def _shard_worker(
         cpu_backoff_delay = None
     thermal_check_every = 64
     try:
-        cctx = zstd.ZstdCompressor(level=max(int(zstd_level), 1), threads=2)
+        # One compression thread per reader. Extra zstd threads steal cores
+        # from the parallel shard readers.
+        cctx = zstd.ZstdCompressor(level=max(int(zstd_level), 1), threads=1)
         with tmp_path.open("wb") as raw_out:
             with cctx.stream_writer(raw_out) as compressed:
                 with tarfile.open(fileobj=compressed, mode="w|", bufsize=tar_bufsize) as tar:
@@ -1463,7 +1474,11 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
         )
         upload_n = max(int(getattr(settings, "extract_upload_concurrency", 4) or 4), 1)
         if parallel_readers > 1:
-            parallel_readers = min(max(parallel_readers, min(upload_n, worker_count)), 8, worker_count)
+            parallel_readers = min(
+                max(parallel_readers, min(upload_n, worker_count)),
+                16,
+                worker_count,
+            )
     elif mobile_mode:
         parallel_readers, worker_count, io_reason = plan_mobile_extract_io(
             vd,

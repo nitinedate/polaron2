@@ -345,6 +345,14 @@ def _gate_inventory_recommendation(db, job_id: str, recommendation: dict | None)
     if not recommendation:
         return None
     try:
+        from app.services.catalog_artifact_runner import artifacts_ready_for_inventory
+
+        ready, _wait_reason = artifacts_ready_for_inventory(db, job_id)
+        if not ready:
+            return None
+    except Exception:
+        pass
+    try:
         from app.forensic_common.job_types import is_mobile_job
 
         if is_mobile_job(db, job_id):
@@ -1308,7 +1316,25 @@ def dispatch_stage_agent(db, job_id: str, *, schema_name: str, recommendation: d
     elif stage_key == "inventory_agent":
         from app.services.catalog_artifact_runner import queue_axiom_artifact_inventory
 
-        queue_axiom_artifact_inventory(db, job_id, schema_name=schema_name)
+        queued = queue_axiom_artifact_inventory(db, job_id, schema_name=schema_name)
+        wait_reason = str(queued.get("reason") or "")
+        if not queued.get("queued_axiom_inventory") and wait_reason.startswith("waiting_for_artifacts"):
+            if event_id:
+                update_heal_event(
+                    db,
+                    event_id,
+                    status="resolved",
+                    remedy_code="waiting_for_artifacts",
+                    remedy_detail=wait_reason,
+                    resolve=True,
+                )
+                db.commit()
+            return {
+                "status": "waiting",
+                "agent_id": agent_id,
+                "action": action,
+                "message": wait_reason,
+            }
         msg = f"[Supervisor] {agent_id} — artifact inventory queued ({reason})"
     elif agent_id == "rag_enrich_agent" or stage_key == "rag_enrich_agent":
         from app.forensic_common.pipeline_routing import followup_queue
@@ -1429,6 +1455,13 @@ def supervise_firm_jobs(db, *, schema_name: str) -> dict:
     actions: list[dict] = []
     for row in rows:
         job_id = str(row["id"])
+        try:
+            from app.services.mobile_platform_agents import current_service_owns_job
+
+            if not current_service_owns_job(db, job_id):
+                continue
+        except Exception:
+            log.debug("service ownership check failed job=%s", job_id, exc_info=True)
         try:
             from app.services.agent_huddle import run_agent_huddle
 

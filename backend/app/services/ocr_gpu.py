@@ -837,12 +837,33 @@ def _digital_text_usable(text: str | None) -> bool:
     return sum(ch.isalnum() for ch in t) >= 8
 
 
-def _raster_needs_actual_ocr(img) -> bool:
-    """True for blurry / unclear / tilted / scanned pages with no digital text.
+def _is_clear_photograph(img) -> bool:
+    """True for a color picture. Scanned pages are mostly gray paper and ink."""
+    try:
+        small = img.convert("RGB")
+        small.thumbnail((48, 48))
+        reader = getattr(small, "get_flattened_data", None) or small.getdata
+        pixels = list(reader())
+        if len(pixels) < 16:
+            return False
+        colorful = 0
+        for r, g, b in pixels:
+            if max(r, g, b) - min(r, g, b) > 28:
+                colorful += 1
+        return (colorful / float(len(pixels))) >= 0.38
+    except Exception:
+        return False
 
-    Blank, flat, or decorative rasters are skipped. Born-digital PDFs never
-    reach here because `_digital_text_usable` already returned cpu_done.
+
+def _raster_needs_actual_ocr(img) -> bool:
+    """True for scanned pages with no digital text.
+
+    Blank pages and clear color photographs are skipped. GLM stays on
+    document scans. Born-digital PDFs never reach here because
+    `_digital_text_usable` already returned cpu_done.
     """
+    if _is_clear_photograph(img):
+        return False
     try:
         gray = img.convert("L")
         w, h = gray.size

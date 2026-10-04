@@ -1216,14 +1216,12 @@ def _heal_selected_host_path(probe: str) -> None:
     if not raw or not Path("/.dockerenv").exists():
         return
     try:
-        from app.services.drive_mount_agent import (
-            ensure_path_mounted,
-            mounted_letters,
-            windows_letter_from_path,
-        )
+        from app.services.drive_mount_agent import ensure_path_mounted, path_is_readable
 
-        letter = windows_letter_from_path(raw)
-        if letter and letter in mounted_letters():
+        # A /host/<letter> directory can exist as the parent of some other
+        # folder while this worker still cannot read the selected export.
+        # Letter presence is not enough — remount until the exact path is readable.
+        if path_is_readable(raw):
             return
         ensure_path_mounted(raw, wait_sec=90.0)
     except Exception as exc:
@@ -1312,10 +1310,17 @@ def resolve_host_path(
         if match:
             letter = match.group(1).upper()
         loc = (letter or "?").lower()
+        letter_root = _host_mount_prefix() / loc if letter else None
+        if letter_root is not None and _drive_mount_accessible(letter_root):
+            raise ValueError(
+                f"Path not found inside Docker: {display}. "
+                f"Drive {letter}: is mounted, but this worker cannot read that folder. "
+                "HostDrive is refreshing the phone and disk workers — click Try again in a moment."
+            )
         raise ValueError(
             f"Path not found inside Docker: {display}. "
             f"Drive {letter or '?'}: is visible on the office server but not mounted inside Docker "
-            f"(missing /host/{loc}). HostDrive remounted that letter — click Try again if it just came online."
+            f"(missing /host/{loc}). HostDrive is refreshing that letter — click Try again if it just came online."
         )
     hint = _missing_windows_drive_mount_hint(display, candidate)
     if hint:

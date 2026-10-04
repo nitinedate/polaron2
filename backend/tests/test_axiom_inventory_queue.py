@@ -56,6 +56,63 @@ def test_queue_skips_when_already_running() -> None:
     task.delay.assert_not_called()
 
 
+def test_queue_stays_quiet_while_disk_has_no_artifacts() -> None:
+    db = MagicMock()
+    with patch(
+        "app.services.catalog_artifact_runner.artifacts_ready_for_inventory",
+        return_value=(False, "waiting_for_artifacts (0 < 500)"),
+    ), patch(
+        "app.services.catalog_artifact_runner.axiom_inventory_progress",
+        return_value={"platform": "Windows", "total": 614, "completed": 0, "done": False},
+    ), patch(
+        "app.services.catalog_artifact_runner.write_disk_log",
+    ) as disk_log, patch(
+        "app.services.catalog_artifact_runner.ensure_job_axiom_results_schema",
+    ), patch(
+        "app.services.artifact_selection_catalog.persist_job_axiom_platform",
+    ):
+        result = queue_axiom_artifact_inventory(db, "job-1", schema_name="firm_aetheris")
+    assert result["queued_axiom_inventory"] is False
+    assert result["reason"].startswith("waiting_for_artifacts")
+    disk_log.assert_not_called()
+
+
+def test_zero_artifacts_during_extract_is_a_wait_not_a_failure() -> None:
+    from app.services.catalog_artifact_runner import artifacts_ready_for_inventory
+
+    with patch(
+        "app.services.catalog_artifact_runner.materialized_artifact_count",
+        return_value=0,
+    ), patch(
+        "app.services.catalog_artifact_runner._min_artifacts_for_inventory",
+        return_value=500,
+    ), patch(
+        "app.services.catalog_artifact_runner._job_pipeline_state",
+        return_value=("processing", "extract"),
+    ):
+        ready, reason = artifacts_ready_for_inventory(MagicMock(), "job-1")
+    assert ready is False
+    assert reason == "waiting_for_artifacts (0 < 500)"
+
+
+def test_small_image_is_ready_after_materialize() -> None:
+    from app.services.catalog_artifact_runner import artifacts_ready_for_inventory
+
+    with patch(
+        "app.services.catalog_artifact_runner.materialized_artifact_count",
+        return_value=120,
+    ), patch(
+        "app.services.catalog_artifact_runner._min_artifacts_for_inventory",
+        return_value=500,
+    ), patch(
+        "app.services.catalog_artifact_runner._job_pipeline_state",
+        return_value=("indexing", "parse"),
+    ):
+        ready, reason = artifacts_ready_for_inventory(MagicMock(), "job-1")
+    assert ready is True
+    assert "120" in reason
+
+
 def test_inventory_in_flight_detects_axiom_pass_log() -> None:
     from datetime import datetime, timezone
 
