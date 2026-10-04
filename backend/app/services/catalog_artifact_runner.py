@@ -1078,10 +1078,47 @@ def rerun_artifact_inventory(db, job_id: str, *, schema_name: str) -> dict[str, 
 
 
 def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = None) -> dict[str, Any]:
-    """Persist AXIOM-aligned counts for all in-scope catalog artifacts (single pass)."""
+    """Persist AXIOM-aligned counts for all in-scope catalog artifacts (single pass).
+
+    V45.2: the whole run is wrapped in ``InventoryLiveness`` — the Redis job
+    lock is refreshed every 45 s and a liveness line naming the current
+    sub-step is written every 90 s, so a slow pre-count step can no longer be
+    mistaken for a dead worker (double dispatch) and the operator can see which
+    step is consuming the time.
+    """
+    from app.services.inventory_liveness import InventoryLiveness
+
+    with InventoryLiveness(schema_name, job_id) as live:
+        try:
+            result = _run_axiom_artifact_inventory_impl(db, job_id, schema_name=schema_name, live=live)
+        finally:
+            try:
+                summary = live.summary()
+                write_disk_log(
+                    db,
+                    job_id,
+                    "Artifact inventory step timings — "
+                    + ", ".join(f"{k} {v:,.0f}s" for k, v in list(summary.items())[:8]),
+                    stage=INVENTORY_STAGE,
+                    metadata={"step_timings_sec": summary, "total_sec": round(live.elapsed(), 1)},
+                )
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+    return result
+
+
+def _run_axiom_artifact_inventory_impl(
+    db, job_id: str, *, schema_name: str | None = None, live: Any = None
+) -> dict[str, Any]:
     from app.services.job_control import pipeline_should_stop
     from app.services.pipeline_orchestrator import log_agent, merge_orchestration_into_progress
 
+    _mark = (live.step if live is not None else (lambda *a, **k: None))
+    _mark("results schema ensure")
     ensure_job_axiom_results_schema(db)
     if pipeline_should_stop(db, job_id):
         inv = axiom_inventory_progress(db, job_id)
@@ -1131,6 +1168,7 @@ def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = N
             except Exception:
                 pass
 
+    _mark("catalog ensure")
     platform = resolve_job_axiom_platform(db, job_id)
     try:
         from app.services.catalog_ingest import ensure_platform_axiom_catalog
@@ -1138,6 +1176,7 @@ def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = N
         ensure_platform_axiom_catalog(db, platform)
     except Exception as exc:
         log.warning("catalog ensure before inventory failed job=%s: %s", job_id, exc)
+    _mark("scope rows")
     scoped_rows = inventory_scope_rows(db, job_id, platform=platform)
     total = len(scoped_rows)
     if total <= 0:
@@ -1200,6 +1239,7 @@ def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = N
     merge_orchestration_into_progress(db, job_id)
     db.commit()
 
+    _mark("collector cache reset")
     from app.services.mobile_forensic.detection import is_mobile_job
 
     mobile_job = is_mobile_job(db, job_id)
@@ -1313,6 +1353,7 @@ def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = N
                     except Exception:
                         pass
 
+            _mark("extension census")
             ensure_disk_extension_censuses(db, job_id, on_progress=_census_progress)
         except Exception as exc:
             log.warning("disk extension census prewarm failed job=%s: %s", job_id, exc)
@@ -1365,6 +1406,7 @@ def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = N
                 label = f"Artifact inventory — {message} ({ui_pct}%)"
             else:
                 resolved_stage = "counting"
+                _mark("counting catalog", idx=idx, total=total)
                 ui_pct = inventory_ui_pct_for(
                     stage="counting",
                     count_idx=idx,
@@ -1437,6 +1479,7 @@ def run_axiom_artifact_inventory(db, job_id: str, *, schema_name: str | None = N
             )
             seed_fallback_path_counts(job_id, scoped_rows)
         else:
+            _mark("path-token index")
             _count_progress("Building streaming path index", 0, total, stage="path_index")
             ensure_fallback_path_counts(
                 db,
@@ -1995,6 +2038,7 @@ def inventory_task_in_flight(db, job_id: str, *, within_sec: float = 1800.0) -> 
              AND (
                message ILIKE '%inventory batch%'
                OR message ILIKE '%Counting catalog artifacts%'
+               OR message ILIKE '%Artifact inventory liveness%'
                OR message ILIKE '%extension census%'
                OR message ILIKE '%Document disk census%'
                OR message ILIKE '%Media inventory%'

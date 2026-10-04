@@ -205,7 +205,7 @@ def domain_pipeline_agents() -> dict[str, dict[str, Any]]:
             "name": "Artifact Inventory Agent (Disk)",
             "stage": "artifact_inventory",
             "description": "Disk/EWF catalog artifact counts (extension census + Windows collectors).",
-            "queue": "disk-build",
+            "queue": "disk-inventory",
             "task": "app.tasks.axiom_artifact_inventory_task",
             "domain": "disk",
         },

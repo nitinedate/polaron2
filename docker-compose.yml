@@ -485,7 +485,8 @@ services:
       - --concurrency=8
       - --prefetch-multiplier=1
       - -Q
-      - disk-build
+      # V45.2: inventory has its own lane; the disk pool is idle after extraction.
+      - disk-build,disk-inventory
 
   # Dedicated parse pool so parse bursts cannot occupy every disk-build process.
   worker-parse:
@@ -524,7 +525,7 @@ services:
       - --concurrency=${PARSE_CELERY_CONCURRENCY:-6}
       - --prefetch-multiplier=1
       - -Q
-      - disk-parse
+      - disk-parse,disk-inventory
 
   # GPU embeddings on rag-index. OCR runs on worker-ocr-gpu so both can overlap.
   worker-rag-gpu:

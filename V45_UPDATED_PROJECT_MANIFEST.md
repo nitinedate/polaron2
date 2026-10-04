@@ -15,6 +15,10 @@ Full details: `POLARON_EXPERT_REVIEW_V45_20261004.md`. Unified diffs: `patches_v
 | `backend/app/services/mobile_forensic/whatsapp_crypt.py` | REPLACED — correct key offset (126), crypt15 HKDF, crypt14/15 header walk, diagnostics |
 | `backend/app/services/mobile_forensic/parsers/whatsapp_modern.py` | NEW — modern msgstore resolver, JID joins, media, revoked/quoted/FTS deleted recovery, calls |
 | `backend/app/services/mobile_forensic/parsers/messaging.py` | routes modern DBs to the resolver; freelist carve on decrypted bytes; decrypt-failure artifact |
+| `backend/app/services/inventory_liveness.py` | **V45.2** NEW — lock heartbeat + sub-step liveness log for the whole inventory run |
+| `backend/app/services/catalog_artifact_runner.py` | **V45.2** — run wrapped in liveness; step markers (results schema, catalog ensure, scope rows, census, path index, counting); step-timing summary line; liveness lines count as activity |
+| `backend/app/celery_factory.py`, `forensic_common/pipeline_routing.py` | **V45.2** — inventory task on its own `disk-inventory` queue (was sharing `disk-parse` with parse/enrich) |
+| `diagnostics/diagnose_inventory_stall.py`, `Diagnose-Inventory-Stall.cmd` | **V45.2** NEW — one-shot stall diagnosis (celery/redis/queues/pg_stat_activity/logs) |
 | `backend/app/parsers/emlx_sidecar.py` | NEW — Apple Mail plist flags/dates + `Attachments/` sidecars |
 | `backend/app/parsers/email_mime_parser.py` | preview includes `emlx` block + sidecar attachments |
 | `backend/tests/test_whatsapp_crypt.py` | fixed: test had encoded the wrong key offset |
@@ -23,7 +27,7 @@ Full details: `POLARON_EXPERT_REVIEW_V45_20261004.md`. Unified diffs: `patches_v
 ## Deployment
 | File | Change |
 |---|---|
-| `docker-compose.yml` | worker DB pool 2+2 → 4+8 / 90 s; `/scratch` bind mount on `worker-disk` (`EXTRACT_SCRATCH_HOST_DIR`) |
+| `docker-compose.yml` | **V45.2:** `worker-disk` consumes `disk-build,disk-inventory`, `worker-parse` consumes `disk-parse,disk-inventory`. V45: worker DB pool 2+2 → 4+8 / 90 s; `/scratch` bind mount on `worker-disk` (`EXTRACT_SCRATCH_HOST_DIR`) |
 | `.env` | **V45.1:** `DEFER_BACKGROUND_RAG_WHILE_OCR=true`, `GPU_HEAVY_LOCK_WAIT_SEC=180`. V45: extraction tunables (`EXTRACT_READ_SEMAPHORE=8`, HDD readers/chunks, scratch, vendor filter), GPU admission (`GPU_HEAVY_MAX_CONCURRENT=1`, OCR 0.80 / RAG 0.35), pool vars. **Create `F:/PolaronBackup/forensic-data/scratch` (or change `EXTRACT_SCRATCH_HOST_DIR`) before `docker compose up`.** |
 
 ## Laptop scanner (vuln)

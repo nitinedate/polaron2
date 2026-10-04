@@ -30,7 +30,8 @@ FORENSIC_ROUTES = {
     "app.tasks.rag_append_task": {"queue": "rag-index"},
     "app.tasks.ocr_drain_task": {"queue": "ocr"},
     "app.tasks.ocr_bucket_task": {"queue": "ocr"},
-    "app.tasks.axiom_artifact_inventory_task": {"queue": "disk-parse"},
+    # V45.2: own lane — inventory no longer waits behind parse/enrich on disk-parse.
+    "app.tasks.axiom_artifact_inventory_task": {"queue": "disk-inventory"},
     "app.tasks.graph_sync_task": {"queue": "agent-orchestration"},
     "app.tasks.rag_enrich_task": {"queue": "disk-parse"},
     "app.tasks.report_gen_task": {"queue": "report-gen"},
