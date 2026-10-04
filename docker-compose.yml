@@ -27,6 +27,19 @@ x-common-net: &common-net
     - default
     - aetheris-common
 
+# V45.3 container lifecycle. Celery runs as PID 1 (entrypoint execvp); without an init
+# process signals are not forwarded/reaped, and compose's default 10 s grace then
+# SIGKILLs the worker mid-task. A child blocked in uninterruptible I/O (9p/gRPC-FUSE
+# bind mount of G:\ evidence) or inside a CUDA call cannot be killed, the PID
+# namespace never tears down and Docker reports
+#   "cannot stop container: tried to kill container, but did not receive an exit event".
+# tini + a real grace period + Celery cold shutdown (REMAP_SIGTERM) make stops
+# deterministic; acks_late tasks are redelivered after restart.
+x-worker-lifecycle: &worker-lifecycle
+  init: true
+  stop_signal: SIGTERM
+  stop_grace_period: 120s
+
 # Probe host room (CPU/RAM/GPU/thermal) then exec celery — see scripts/dynamic_perf_entrypoint.py
 x-dynamic-entrypoint: &dynamic-entrypoint
   - python
@@ -35,6 +48,10 @@ x-dynamic-entrypoint: &dynamic-entrypoint
 x-worker-env: &worker-env
   DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
   REDIS_URL: redis://redis:6379/0
+  # V45.3: SIGTERM => cold shutdown (stop consuming, terminate children, exit) instead of
+  # warm shutdown that waits for an hours-long extraction and then gets SIGKILLed.
+  REMAP_SIGTERM: ${CELERY_REMAP_SIGTERM:-SIGQUIT}
+  CELERY_SHUTDOWN_RELEASE_GPU: ${CELERY_SHUTDOWN_RELEASE_GPU:-true}
   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
   RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
   RESOURCE_GOVERNOR_GROUP: ${RESOURCE_GOVERNOR_GROUP:-aetheris-host}
@@ -375,6 +392,8 @@ services:
 
   api:
     <<: *common-net
+    init: true
+    stop_grace_period: 30s
     image: rag_new2-api
     build:
       context: ./backend
@@ -409,6 +428,7 @@ services:
       - ./scripts:/scripts
       - ./migrations:/migrations
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
+      - evidence_staging:/host/${EVIDENCE_STAGING_LETTER:-z}
       - type: bind
         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data
         target: /app/data
@@ -441,7 +461,7 @@ services:
 
   # Disk extract/parse — forensic product only (vuln scans live in services/vuln).
   worker-disk:
-    <<: *common-net
+    <<: [*common-net, *worker-lifecycle]
     image: rag_new2-api
     build:
       context: ./backend
@@ -456,6 +476,7 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
+      - evidence_staging:/host/${EVIDENCE_STAGING_LETTER:-z}
       - type: bind
         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/job-data
         target: /app/data
@@ -490,7 +511,7 @@ services:
 
   # Dedicated parse pool so parse bursts cannot occupy every disk-build process.
   worker-parse:
-    <<: *common-net
+    <<: [*common-net, *worker-lifecycle]
     image: rag_new2-api
     build:
       context: ./backend
@@ -504,6 +525,7 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
+      - evidence_staging:/host/${EVIDENCE_STAGING_LETTER:-z}
       - type: bind
         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/job-data
         target: /app/data
@@ -529,7 +551,7 @@ services:
 
   # GPU embeddings on rag-index. OCR runs on worker-ocr-gpu so both can overlap.
   worker-rag-gpu:
-    <<: *common-net
+    <<: [*common-net, *worker-lifecycle]
     image: rag_new2-api
     build:
       context: ./backend
@@ -597,7 +619,7 @@ services:
 
   # Dedicated OCR GPU worker — independent of RAG embeddings (two GPU slots).
   worker-ocr-gpu:
-    <<: *common-net
+    <<: [*common-net, *worker-lifecycle]
     image: rag_new2-api
     build:
       context: ./backend
@@ -656,7 +678,7 @@ services:
       - ocr
 
   worker-report:
-    <<: *common-net
+    <<: [*common-net, *worker-lifecycle]
     image: rag_new2-api
     build:
       context: ./backend
@@ -697,7 +719,7 @@ services:
 
   # Forensic Agentic AI — isolated from disk-build / rag-index
   worker-agent:
-    <<: *common-net
+    <<: [*common-net, *worker-lifecycle]
     image: rag_new2-api
     build:
       context: ./backend
@@ -742,7 +764,7 @@ services:
       - agent-orchestration
 
   worker-beat:
-    <<: *common-net
+    <<: [*common-net, *worker-lifecycle]
     image: rag_new2-api
     build:
       context: ./backend
@@ -786,6 +808,11 @@ services:
         condition: service_healthy
 
 volumes:
+  # V45.3: evidence staged into the docker-desktop VM (ext4). Reads are native —
+  # no Windows file-sharing layer, so no 2-3 MB/s ceiling and no unkillable
+  # D-state worker. Appears in the UI as drive ${EVIDENCE_STAGING_LETTER:-Z}:.
+  # Fill it with Stage-Evidence.cmd <source folder> <case name>.
+  evidence_staging:
   neo4j_data:
   opensearch_data:
 

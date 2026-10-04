@@ -372,7 +372,9 @@ Write-Step "Start forensic, Android, iOS, vulnerability, and gateway"
 $stackArgs = @(
     "-NoProfile", "-ExecutionPolicy", "Bypass",
     "-File", (Join-Path $root "scripts\start-stack.ps1"),
-    "-Service", "all", "-NoBuild"
+    "-Service", "all", "-NoBuild",
+    # V45.3: production must never be left half-recreated by an unkillable worker.
+    "-AutoRecoverEngine"
 )
 # Production and the public host publish 80/443. Do not also bind 0.0.0.0:3000
 # here — that port is already taken on the production machine, and the HTTPS

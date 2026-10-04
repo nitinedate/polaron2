@@ -13,6 +13,9 @@ x-mobile-env: &mobile-env
   VULN_MODULE_ENABLED: "false"
   DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
   REDIS_URL: redis://redis:6379/2
+  # V45.3: SIGTERM => Celery cold shutdown; see root docker-compose.yml x-worker-lifecycle.
+  REMAP_SIGTERM: ${CELERY_REMAP_SIGTERM:-SIGQUIT}
+  CELERY_SHUTDOWN_RELEASE_GPU: ${CELERY_SHUTDOWN_RELEASE_GPU:-true}
   # Shared leases only. Job state/evidence NEVER enters this Redis.
   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
   RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
@@ -119,6 +122,8 @@ services:
 
   api:
     <<: *app-common
+    init: true
+    stop_grace_period: 30s
     environment:
       <<: *mobile-env
       DB_POOL_SIZE: ${MOBILE_API_DB_POOL_SIZE:-10}
@@ -153,6 +158,9 @@ services:
 
   worker-build:
     <<: *app-common
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
     depends_on:
       api: {condition: service_healthy}
       nvidia-cuda: {condition: service_healthy}
@@ -163,6 +171,9 @@ services:
   # starve new ios acquisitions/builds.
   worker-parse:
     <<: *app-common
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
     depends_on:
       api: {condition: service_healthy}
       nvidia-cuda: {condition: service_healthy}
@@ -171,6 +182,9 @@ services:
 
   worker-rag:
     <<: *app-common
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
     environment:
       <<: *mobile-env
       OCR_ENABLED: "false"
@@ -183,6 +197,9 @@ services:
 
   worker-ocr:
     <<: *app-common
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
     environment:
       <<: *mobile-env
       OCR_CELERY_CONCURRENCY: "1"
@@ -196,6 +213,9 @@ services:
 
   worker-report:
     <<: *app-common
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
     depends_on:
       api: {condition: service_healthy}
       nvidia-cuda: {condition: service_healthy}
@@ -204,6 +224,9 @@ services:
 
   worker-beat:
     <<: *app-common
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
     depends_on:
       api: {condition: service_healthy}
       nvidia-cuda: {condition: service_healthy}

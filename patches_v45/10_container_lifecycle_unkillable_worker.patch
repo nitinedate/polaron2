@@ -1,0 +1,385 @@
+--- a/docker-compose.yml	2026-10-04 16:12:19.550711694 +0000
++++ b/docker-compose.yml	2026-10-04 16:12:19.685753415 +0000
+@@ -27,6 +27,19 @@
+     - default
+     - aetheris-common
+ 
++# V45.3 container lifecycle. Celery runs as PID 1 (entrypoint execvp); without an init
++# process signals are not forwarded/reaped, and compose's default 10 s grace then
++# SIGKILLs the worker mid-task. A child blocked in uninterruptible I/O (9p/gRPC-FUSE
++# bind mount of G:\ evidence) or inside a CUDA call cannot be killed, the PID
++# namespace never tears down and Docker reports
++#   "cannot stop container: tried to kill container, but did not receive an exit event".
++# tini + a real grace period + Celery cold shutdown (REMAP_SIGTERM) make stops
++# deterministic; acks_late tasks are redelivered after restart.
++x-worker-lifecycle: &worker-lifecycle
++  init: true
++  stop_signal: SIGTERM
++  stop_grace_period: 120s
++
+ # Probe host room (CPU/RAM/GPU/thermal) then exec celery — see scripts/dynamic_perf_entrypoint.py
+ x-dynamic-entrypoint: &dynamic-entrypoint
+   - python
+@@ -35,6 +48,10 @@
+ x-worker-env: &worker-env
+   DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
+   REDIS_URL: redis://redis:6379/0
++  # V45.3: SIGTERM => cold shutdown (stop consuming, terminate children, exit) instead of
++  # warm shutdown that waits for an hours-long extraction and then gets SIGKILLed.
++  REMAP_SIGTERM: ${CELERY_REMAP_SIGTERM:-SIGQUIT}
++  CELERY_SHUTDOWN_RELEASE_GPU: ${CELERY_SHUTDOWN_RELEASE_GPU:-true}
+   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
+   RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
+   RESOURCE_GOVERNOR_GROUP: ${RESOURCE_GOVERNOR_GROUP:-aetheris-host}
+@@ -375,6 +392,8 @@
+ 
+   api:
+     <<: *common-net
++    init: true
++    stop_grace_period: 30s
+     image: rag_new2-api
+     build:
+       context: ./backend
+@@ -441,7 +460,7 @@
+ 
+   # Disk extract/parse — forensic product only (vuln scans live in services/vuln).
+   worker-disk:
+-    <<: *common-net
++    <<: [*common-net, *worker-lifecycle]
+     image: rag_new2-api
+     build:
+       context: ./backend
+@@ -490,7 +509,7 @@
+ 
+   # Dedicated parse pool so parse bursts cannot occupy every disk-build process.
+   worker-parse:
+-    <<: *common-net
++    <<: [*common-net, *worker-lifecycle]
+     image: rag_new2-api
+     build:
+       context: ./backend
+@@ -529,7 +548,7 @@
+ 
+   # GPU embeddings on rag-index. OCR runs on worker-ocr-gpu so both can overlap.
+   worker-rag-gpu:
+-    <<: *common-net
++    <<: [*common-net, *worker-lifecycle]
+     image: rag_new2-api
+     build:
+       context: ./backend
+@@ -597,7 +616,7 @@
+ 
+   # Dedicated OCR GPU worker — independent of RAG embeddings (two GPU slots).
+   worker-ocr-gpu:
+-    <<: *common-net
++    <<: [*common-net, *worker-lifecycle]
+     image: rag_new2-api
+     build:
+       context: ./backend
+@@ -656,7 +675,7 @@
+       - ocr
+ 
+   worker-report:
+-    <<: *common-net
++    <<: [*common-net, *worker-lifecycle]
+     image: rag_new2-api
+     build:
+       context: ./backend
+@@ -697,7 +716,7 @@
+ 
+   # Forensic Agentic AI — isolated from disk-build / rag-index
+   worker-agent:
+-    <<: *common-net
++    <<: [*common-net, *worker-lifecycle]
+     image: rag_new2-api
+     build:
+       context: ./backend
+@@ -742,7 +761,7 @@
+       - agent-orchestration
+ 
+   worker-beat:
+-    <<: *common-net
++    <<: [*common-net, *worker-lifecycle]
+     image: rag_new2-api
+     build:
+       context: ./backend
+--- a/backend/app/celery_factory.py	2026-10-04 16:12:19.550928774 +0000
++++ b/backend/app/celery_factory.py	2026-10-04 16:12:23.899867364 +0000
+@@ -104,6 +104,8 @@
+     "accept_content": ["json"],
+     "task_track_started": True,
+     "task_acks_late": True,
++    # V45.3: never leave a long task un-acked forever on broker loss; it is redelivered.
++    "worker_cancel_long_running_tasks_on_connection_loss": True,
+     "worker_prefetch_multiplier": 1,
+     "broker_connection_retry_on_startup": True,
+     "broker_connection_retry": True,
+@@ -151,4 +153,53 @@
+                 "kwargs": {},
+             },
+         }
++    register_shutdown_hooks(celery)
+     return celery
++
++
++# ---------------------------------------------------------------------------
++# V45.3 — deterministic shutdown. On SIGTERM/SIGQUIT (compose stop/recreate) the
++# worker releases what makes a container unkillable or leaves peers waiting:
++#   * CUDA residents (GLM-OCR, embedder) so the nvidia context is torn down before
++#     the process exits (Docker Desktop/WSL2 cannot kill a container that still
++#     holds a GPU context);
++#   * Redis heavy leases / job locks held by this process so other products do not
++#     wait on a stale GPU lane for the lock TTL.
++# ---------------------------------------------------------------------------
++
++def _release_on_shutdown(**_kwargs) -> None:
++    import logging
++    import os
++
++    log = logging.getLogger("celery.shutdown")
++    if (os.environ.get("CELERY_SHUTDOWN_RELEASE_GPU") or "true").strip().lower() not in {"1", "true", "yes", "on"}:
++        return
++    for label, fn in (
++        ("glm-ocr", lambda: __import__("app.services.ocr_gpu", fromlist=["unload_glm_ocr"]).unload_glm_ocr()),
++        ("embedder", lambda: __import__("app.services.embedding_gpu", fromlist=["unload_embedder"]).unload_embedder()),
++        ("gpu-lease", lambda: __import__("app.services.job_locks", fromlist=["release_gpu_heavy_slot"]).release_gpu_heavy_slot()),
++        ("cpu-lease", lambda: __import__("app.services.job_locks", fromlist=["release_cpu_heavy_slot"]).release_cpu_heavy_slot()),
++    ):
++        try:
++            fn()
++            log.info("shutdown: released %s", label)
++        except Exception as exc:  # never block shutdown
++            log.debug("shutdown: %s release skipped: %s", label, exc)
++    try:
++        import torch
++
++        if torch.cuda.is_available():
++            torch.cuda.synchronize()
++            torch.cuda.empty_cache()
++    except Exception:
++        pass
++
++
++def register_shutdown_hooks(app) -> None:
++    try:
++        from celery.signals import worker_process_shutdown, worker_shutting_down
++
++        worker_shutting_down.connect(_release_on_shutdown, weak=False)
++        worker_process_shutdown.connect(_release_on_shutdown, weak=False)
++    except Exception:
++        pass
+--- a/scripts/start-stack.ps1	2026-10-04 16:12:19.550969214 +0000
++++ b/scripts/start-stack.ps1	2026-10-04 16:13:14.202815665 +0000
+@@ -6,12 +6,16 @@
+     [switch]$IncludeGvm,
+     [switch]$IncludeWazuh,
+     [switch]$NoBuild,
+-    [switch]$SkipGateway
++    [switch]$SkipGateway,
++    # V45.3: on "cannot stop container ... did not receive an exit event" restart the
++    # Docker Desktop engine automatically and retry the wave once.
++    [switch]$AutoRecoverEngine
+ )
+ 
+ $ErrorActionPreference = "Stop"
+ $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+ . (Join-Path $root "scripts\free-published-ports.ps1")
++. (Join-Path $root "scripts\docker-engine-recovery.ps1")
+ 
+ function Get-Docker {
+     $docker = Get-Command docker -ErrorAction SilentlyContinue
+@@ -199,7 +203,18 @@
+             $buildOnce = $false
+         }
+         $upArgs += $durable
+-        & $Docker @composeArgs @upArgs
++        # V45.3: workers are stopped with their grace period BEFORE recreate so Celery
++        # cold-shutdown can release CUDA/locks; `up -d` alone uses a 10 s default and
++        # SIGKILLs mid-task, which is what produced the unkillable container.
++        $workerNames = @($durable | Where-Object { $_ -like "worker-*" })
++        if ($workerNames.Count) {
++            $stopped = Stop-AetherisWorkers -Docker $Docker -ComposeArgs $composeArgs -Services $workerNames -GraceSec 120
++            if (-not $stopped) {
++                Write-Host "A worker container could not be stopped; invoking recovery." -ForegroundColor Yellow
++            }
++        }
++        $ok = Invoke-ComposeWithRecovery -Docker $Docker -ComposeArgs $composeArgs -Args $upArgs -AutoRecoverEngine:$AutoRecoverEngine
++        if (-not $ok) { $LASTEXITCODE = 1 } else { $LASTEXITCODE = 0 }
+         if ($LASTEXITCODE -ne 0) {
+             if ($durable -contains "gvmd") {
+                 Write-Host "Greenbone did not become healthy. Recent gvmd and pg-gvm logs:" -ForegroundColor Yellow
+--- a/script_docker/start_docker.ps1	2026-10-04 16:12:19.551055863 +0000
++++ b/script_docker/start_docker.ps1	2026-10-04 16:13:14.203821527 +0000
+@@ -372,7 +372,9 @@
+ $stackArgs = @(
+     "-NoProfile", "-ExecutionPolicy", "Bypass",
+     "-File", (Join-Path $root "scripts\start-stack.ps1"),
+-    "-Service", "all", "-NoBuild"
++    "-Service", "all", "-NoBuild",
++    # V45.3: production must never be left half-recreated by an unkillable worker.
++    "-AutoRecoverEngine"
+ )
+ # Production and the public host publish 80/443. Do not also bind 0.0.0.0:3000
+ # here — that port is already taken on the production machine, and the HTTPS
+--- a/services/mobile-android/docker-compose.yml	2026-10-04 16:13:46.037380614 +0000
++++ b/services/mobile-android/docker-compose.yml	2026-10-04 16:13:46.072789733 +0000
+@@ -13,6 +13,9 @@
+   VULN_MODULE_ENABLED: "false"
+   DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
+   REDIS_URL: redis://redis:6379/1
++  # V45.3: SIGTERM => Celery cold shutdown; see root docker-compose.yml x-worker-lifecycle.
++  REMAP_SIGTERM: ${CELERY_REMAP_SIGTERM:-SIGQUIT}
++  CELERY_SHUTDOWN_RELEASE_GPU: ${CELERY_SHUTDOWN_RELEASE_GPU:-true}
+   # Shared leases only. Job state/evidence NEVER enters this Redis.
+   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
+   RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
+@@ -119,6 +122,8 @@
+ 
+   api:
+     <<: *app-common
++    init: true
++    stop_grace_period: 30s
+     environment:
+       <<: *mobile-env
+       DB_POOL_SIZE: ${MOBILE_API_DB_POOL_SIZE:-10}
+@@ -153,6 +158,9 @@
+ 
+   worker-build:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}
+@@ -163,6 +171,9 @@
+   # starve new android acquisitions/builds.
+   worker-parse:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}
+@@ -171,6 +182,9 @@
+ 
+   worker-rag:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     environment:
+       <<: *mobile-env
+       OCR_ENABLED: "false"
+@@ -183,6 +197,9 @@
+ 
+   worker-ocr:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     environment:
+       <<: *mobile-env
+       OCR_CELERY_CONCURRENCY: "1"
+@@ -196,6 +213,9 @@
+ 
+   worker-report:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}
+@@ -204,6 +224,9 @@
+ 
+   worker-beat:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}
+--- a/services/mobile-ios/docker-compose.yml	2026-10-04 16:13:46.041135600 +0000
++++ b/services/mobile-ios/docker-compose.yml	2026-10-04 16:13:46.088567465 +0000
+@@ -13,6 +13,9 @@
+   VULN_MODULE_ENABLED: "false"
+   DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
+   REDIS_URL: redis://redis:6379/2
++  # V45.3: SIGTERM => Celery cold shutdown; see root docker-compose.yml x-worker-lifecycle.
++  REMAP_SIGTERM: ${CELERY_REMAP_SIGTERM:-SIGQUIT}
++  CELERY_SHUTDOWN_RELEASE_GPU: ${CELERY_SHUTDOWN_RELEASE_GPU:-true}
+   # Shared leases only. Job state/evidence NEVER enters this Redis.
+   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
+   RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
+@@ -119,6 +122,8 @@
+ 
+   api:
+     <<: *app-common
++    init: true
++    stop_grace_period: 30s
+     environment:
+       <<: *mobile-env
+       DB_POOL_SIZE: ${MOBILE_API_DB_POOL_SIZE:-10}
+@@ -153,6 +158,9 @@
+ 
+   worker-build:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}
+@@ -163,6 +171,9 @@
+   # starve new ios acquisitions/builds.
+   worker-parse:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}
+@@ -171,6 +182,9 @@
+ 
+   worker-rag:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     environment:
+       <<: *mobile-env
+       OCR_ENABLED: "false"
+@@ -183,6 +197,9 @@
+ 
+   worker-ocr:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     environment:
+       <<: *mobile-env
+       OCR_CELERY_CONCURRENCY: "1"
+@@ -196,6 +213,9 @@
+ 
+   worker-report:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}
+@@ -204,6 +224,9 @@
+ 
+   worker-beat:
+     <<: *app-common
++    init: true
++    stop_signal: SIGTERM
++    stop_grace_period: 120s
+     depends_on:
+       api: {condition: service_healthy}
+       nvidia-cuda: {condition: service_healthy}

@@ -27,6 +27,15 @@ Full details: `POLARON_EXPERT_REVIEW_V45_20261004.md`. Unified diffs: `patches_v
 ## Deployment
 | File | Change |
 |---|---|
+| `docker-compose.yml`, `services/mobile-android/docker-compose.yml`, `services/mobile-ios/docker-compose.yml` | **V45.3** — `init: true`, `stop_signal: SIGTERM`, `stop_grace_period: 120s` on every worker (30 s on api); `REMAP_SIGTERM=SIGQUIT` (Celery cold shutdown); `evidence_staging` named volume mounted as `/host/${EVIDENCE_STAGING_LETTER:-z}` on api/worker-disk/worker-parse |
+| `backend/app/celery_factory.py` | **V45.3** — `worker_shutting_down`/`worker_process_shutdown` hooks release GLM-OCR, embedder, CUDA cache and Redis heavy leases; `worker_cancel_long_running_tasks_on_connection_loss` |
+| `scripts/docker-engine-recovery.ps1` | **V45.3** NEW — detects "did not receive an exit event", `rm -f`, Docker Desktop engine restart, retry |
+| `scripts/start-stack.ps1` | **V45.3** — stops `worker-*` with 120 s grace before `up`, runs `up` through the recovery wrapper; new `-AutoRecoverEngine` switch |
+| `script_docker/start_docker.ps1` | **V45.3** — passes `-AutoRecoverEngine` (production) |
+| `scripts/stage-evidence.ps1`, `Stage-Evidence.cmd` | **V45.3** NEW — copy an evidence folder once into the VM volume (shows as drive Z:); `-Verify` compares SHA-256 |
+
+| File | Change |
+|---|---|
 | `docker-compose.yml` | **V45.2:** `worker-disk` consumes `disk-build,disk-inventory`, `worker-parse` consumes `disk-parse,disk-inventory`. V45: worker DB pool 2+2 → 4+8 / 90 s; `/scratch` bind mount on `worker-disk` (`EXTRACT_SCRATCH_HOST_DIR`) |
 | `.env` | **V45.1:** `DEFER_BACKGROUND_RAG_WHILE_OCR=true`, `GPU_HEAVY_LOCK_WAIT_SEC=180`. V45: extraction tunables (`EXTRACT_READ_SEMAPHORE=8`, HDD readers/chunks, scratch, vendor filter), GPU admission (`GPU_HEAVY_MAX_CONCURRENT=1`, OCR 0.80 / RAG 0.35), pool vars. **Create `F:/PolaronBackup/forensic-data/scratch` (or change `EXTRACT_SCRATCH_HOST_DIR`) before `docker compose up`.** |
 

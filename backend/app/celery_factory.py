@@ -104,6 +104,8 @@ _COMMON = {
     "accept_content": ["json"],
     "task_track_started": True,
     "task_acks_late": True,
+    # V45.3: never leave a long task un-acked forever on broker loss; it is redelivered.
+    "worker_cancel_long_running_tasks_on_connection_loss": True,
     "worker_prefetch_multiplier": 1,
     "broker_connection_retry_on_startup": True,
     "broker_connection_retry": True,
@@ -151,4 +153,53 @@ def create_celery(service: str | None = None) -> Celery:
                 "kwargs": {},
             },
         }
+    register_shutdown_hooks(celery)
     return celery
+
+
+# ---------------------------------------------------------------------------
+# V45.3 — deterministic shutdown. On SIGTERM/SIGQUIT (compose stop/recreate) the
+# worker releases what makes a container unkillable or leaves peers waiting:
+#   * CUDA residents (GLM-OCR, embedder) so the nvidia context is torn down before
+#     the process exits (Docker Desktop/WSL2 cannot kill a container that still
+#     holds a GPU context);
+#   * Redis heavy leases / job locks held by this process so other products do not
+#     wait on a stale GPU lane for the lock TTL.
+# ---------------------------------------------------------------------------
+
+def _release_on_shutdown(**_kwargs) -> None:
+    import logging
+    import os
+
+    log = logging.getLogger("celery.shutdown")
+    if (os.environ.get("CELERY_SHUTDOWN_RELEASE_GPU") or "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    for label, fn in (
+        ("glm-ocr", lambda: __import__("app.services.ocr_gpu", fromlist=["unload_glm_ocr"]).unload_glm_ocr()),
+        ("embedder", lambda: __import__("app.services.embedding_gpu", fromlist=["unload_embedder"]).unload_embedder()),
+        ("gpu-lease", lambda: __import__("app.services.job_locks", fromlist=["release_gpu_heavy_slot"]).release_gpu_heavy_slot()),
+        ("cpu-lease", lambda: __import__("app.services.job_locks", fromlist=["release_cpu_heavy_slot"]).release_cpu_heavy_slot()),
+    ):
+        try:
+            fn()
+            log.info("shutdown: released %s", label)
+        except Exception as exc:  # never block shutdown
+            log.debug("shutdown: %s release skipped: %s", label, exc)
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def register_shutdown_hooks(app) -> None:
+    try:
+        from celery.signals import worker_process_shutdown, worker_shutting_down
+
+        worker_shutting_down.connect(_release_on_shutdown, weak=False)
+        worker_process_shutdown.connect(_release_on_shutdown, weak=False)
+    except Exception:
+        pass

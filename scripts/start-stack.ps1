@@ -6,12 +6,16 @@ param(
     [switch]$IncludeGvm,
     [switch]$IncludeWazuh,
     [switch]$NoBuild,
-    [switch]$SkipGateway
+    [switch]$SkipGateway,
+    # V45.3: on "cannot stop container ... did not receive an exit event" restart the
+    # Docker Desktop engine automatically and retry the wave once.
+    [switch]$AutoRecoverEngine
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . (Join-Path $root "scripts\free-published-ports.ps1")
+. (Join-Path $root "scripts\docker-engine-recovery.ps1")
 
 function Get-Docker {
     $docker = Get-Command docker -ErrorAction SilentlyContinue
@@ -199,7 +203,18 @@ function Start-AetherisService {
             $buildOnce = $false
         }
         $upArgs += $durable
-        & $Docker @composeArgs @upArgs
+        # V45.3: workers are stopped with their grace period BEFORE recreate so Celery
+        # cold-shutdown can release CUDA/locks; `up -d` alone uses a 10 s default and
+        # SIGKILLs mid-task, which is what produced the unkillable container.
+        $workerNames = @($durable | Where-Object { $_ -like "worker-*" })
+        if ($workerNames.Count) {
+            $stopped = Stop-AetherisWorkers -Docker $Docker -ComposeArgs $composeArgs -Services $workerNames -GraceSec 120
+            if (-not $stopped) {
+                Write-Host "A worker container could not be stopped; invoking recovery." -ForegroundColor Yellow
+            }
+        }
+        $ok = Invoke-ComposeWithRecovery -Docker $Docker -ComposeArgs $composeArgs -Args $upArgs -AutoRecoverEngine:$AutoRecoverEngine
+        if (-not $ok) { $LASTEXITCODE = 1 } else { $LASTEXITCODE = 0 }
         if ($LASTEXITCODE -ne 0) {
             if ($durable -contains "gvmd") {
                 Write-Host "Greenbone did not become healthy. Recent gvmd and pg-gvm logs:" -ForegroundColor Yellow
