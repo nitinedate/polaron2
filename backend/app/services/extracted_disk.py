@@ -26,7 +26,8 @@ from app.services.disk_build_log import (
     write_disk_log,
     write_disk_log_committed,
 )
-from app.services.extract_filters import filter_policy_summary, resolve_skip_system_paths, should_extract_node
+from app.services.extract_filters import filter_policy_summary, resolve_skip_system_paths, should_extract_node_v2
+from app.services.extract_noise import NoiseLedger, policy_for_mode
 from app.services.job_control import (
     JobStopRequested,
     checkpoint_index_and_parts,
@@ -252,6 +253,8 @@ def _filter_nodes(
         extract_skip_system_paths=bool(getattr(settings, "extract_skip_system_paths", False)),
         os_info=os_info,
     )
+    noise_policy = policy_for_mode(mode)
+    noise_ledger = NoiseLedger()
     kept: list[dict] = []
     stats: dict = {
         "enumerated": len(nodes),
@@ -260,11 +263,12 @@ def _filter_nodes(
         "filter_policy": policy,
         "skip_system_paths": skip_system,
         "policy_reason": policy_reason,
+        "noise": noise_ledger.as_dict(),
     }
     for node in nodes:
         rel = node["path"]
         size = int(node.get("size_bytes") or 0)
-        ok, reason = should_extract_node(
+        ok, reason = should_extract_node_v2(
             rel,
             size,
             mode=mode,
@@ -272,6 +276,8 @@ def _filter_nodes(
             skip_system_paths=skip_system,
             os_family=family,
             uncertain_max_bytes=settings.extract_uncertain_max_bytes,
+            noise_policy=noise_policy,
+            noise_ledger=noise_ledger,
         )
         if ok:
             kept.append(node)
@@ -279,6 +285,7 @@ def _filter_nodes(
             stats["filtered_out"] += 1
             stats[reason or "other"] = stats.get(reason or "other", 0) + 1
     stats["to_extract"] = len(kept)
+    stats["noise"] = noise_ledger.as_dict()
     return kept, stats
 
 

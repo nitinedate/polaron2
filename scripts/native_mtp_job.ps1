@@ -98,13 +98,35 @@ function Invoke-JobAdb {
     return Invoke-AndroidAdbAcquire -OutDir $adbOut -LogPath $logPath -ProgressFile $progress -WantedMethod $wantedMethod
 }
 
+trap {
+    $msg = [string]$_.Exception.Message
+    if ($msg -match '(?i)not enough space|disk full|space on the disk') {
+        $msg = "The evidence drive is full, so collection stopped. Free space on that drive, or choose a case folder on a drive with room, then retry. Files already copied are kept."
+    }
+    $fail = @{
+        ok                 = $false
+        run_name           = $runName
+        stage_reached      = "failed"
+        error              = $msg
+        errors             = @($msg)
+        method_decision    = $methodDecision
+        limitations        = @($msg)
+        paths              = @{ case_root = $caseDir; run_name = $runName; original = $original; logs = $logs }
+        acquisition_record = @{ output_size = 0; file_count = [int]$copied; missing_fields = @() }
+        evidence_package   = @{ run_name = $runName; extraction_data = @(); complete = $false; file_count = [int]$copied }
+        verification       = @{ ok = $false; verified = 0 }
+    }
+    try { Write-Res $fail } catch {}
+    break
+}
+
 # ADB first. MTP CopyHere of "Phone" can hang in Explorer and would otherwise
 # block this entire job with 0 files.
 $adb = Invoke-JobAdb "Authorising ADB and collecting the accessible Android filesystem"
 if ($adb -and $adb.ok -and $adb.files_copied) { $copied = $copied + [int]$adb.files_copied }
 elseif ($adb -and -not $adb.ok -and $adb.error) { $err = [string]$adb.error }
 
-# Staging under repo\ap survives case-folder wipes (junctions / Explorer CopyHere).
+# Staging survives case-folder wipes (junctions / Explorer CopyHere).
 # Copy it back before MTP so WhatsApp/DCIM are never missing from the sealed run.
 $restored = 0
 if (Get-Command Restore-AdbStageIntoCase -ErrorAction SilentlyContinue) {
@@ -126,8 +148,9 @@ Write-Prog @{
 # Explorer CopyHere hangs for tens of minutes at a few hundred files.
 $waAdb = Join-Path $original "adb_logical\filesystem\sdcard\sdcard_Android_media_com.whatsapp"
 $waAdbLegacy = Join-Path $original "adb_logical\filesystem\sdcard\sdcard_WhatsApp"
-$waStage = Join-Path (Join-Path $repoRoot "ap") "sdcard_Android_media_com.whatsapp"
-$waStageLegacy = Join-Path (Join-Path $repoRoot "ap") "sdcard_WhatsApp"
+$stageRoot = if (Get-Command Get-AdbStageRoot -ErrorAction SilentlyContinue) { Get-AdbStageRoot } else { Join-Path $repoRoot "ap" }
+$waStage = Join-Path $stageRoot "sdcard_Android_media_com.whatsapp"
+$waStageLegacy = Join-Path $stageRoot "sdcard_WhatsApp"
 if ((Test-Path -LiteralPath $waAdb) -or (Test-Path -LiteralPath $waAdbLegacy) -or (Test-Path -LiteralPath $waStage) -or (Test-Path -LiteralPath $waStageLegacy)) {
     $env:AETHERIS_SKIP_MTP_WHATSAPP = "1"
     Write-AcquireLog $logPath "ADB already copied WhatsApp into staging/case. MTP will skip Android/media CopyHere."
@@ -231,6 +254,7 @@ if ($adb -and $adb.ok) {
     }
 }
 $limitations = New-Object System.Collections.Generic.List[string]
+if ($adb -and $adb.disk_note) { [void]$limitations.Add([string]$adb.disk_note) }
 $hasPlainMsgstore = Test-Path -LiteralPath (Join-Path $original "adb_logical\app_data")
 $hasWaMedia = [bool](Test-Path -LiteralPath $waAdb)
 $hasCrypt = $false

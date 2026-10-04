@@ -11,8 +11,9 @@ under-collection loses a case. So every rule here obeys four constraints:
   3. Every exclusion is counted by rule, so the report can state exactly what
      was dropped and why. An examiner can defend "3.2M vendor binaries excluded
      by rule os_vendor_binary"; they cannot defend "the tool skipped some files".
-  4. Every rule is individually switchable, and the whole filter is off by
-     default in `defensible` mode.
+  4. Every rule is individually switchable. `full` mode leaves the filter off.
+     `defensible` applies only positive noise matches (vendor binaries in a
+     vendor tree, caches, fonts, dependency trees) and never an unknown file.
 
 The classic failure this guards against is renamed malware in a system tree.
 That is why binary exclusion requires the file to be in a vendor-owned tree AND
@@ -305,10 +306,10 @@ POLICY_BY_MODE: dict[str, NoisePolicy] = {
     # a renamed binary in a system tree is the one place where dropping by
     # extension could conceivably lose a dropper, so in the court-safe mode we
     # pay the disk cost and keep them.
-    "defensible": NoisePolicy(
-        enabled=True,
-        disabled_rules=frozenset({"os_vendor_binary"}),
-    ),
+    # Defensible still drops only positive noise matches. Vendor binaries in a
+    # vendor tree above the size floor are identical on every machine of that
+    # build; user paths, small files, and named scope artifacts stay.
+    "defensible": NoisePolicy(enabled=True),
     "forensic": NoisePolicy(enabled=True),
     "fast": NoisePolicy(enabled=True),
 }

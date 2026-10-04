@@ -352,11 +352,89 @@ function Link-IosBackupIntoJob {
     return $false
 }
 
+function Get-VolumeFreeBytes {
+    param([string]$Path)
+    if (-not $Path) { return [int64]0 }
+    try {
+        $root = [System.IO.Path]::GetPathRoot($Path)
+        if (-not $root -or $root.Length -lt 1) { return [int64]0 }
+        $letter = $root.Substring(0, 1)
+        $drive = Get-PSDrive -Name $letter -PSProvider FileSystem -ErrorAction Stop
+        return [int64]$drive.Free
+    } catch {
+        return [int64]0
+    }
+}
+
+function Test-VolumeRoom {
+    param([string]$Path, [int64]$MinBytes = 2147483648)
+    return (Get-VolumeFreeBytes -Path $Path) -ge $MinBytes
+}
+
+function Get-AdbStageRoot {
+    # repo\ap is the stable staging folder. A full evidence drive must not be
+    # where adb writes the phone, so use the roomiest local volume instead.
+    $repoStage = Join-Path (Get-RepoRoot) "ap"
+    $repoFree = Get-VolumeFreeBytes -Path $repoStage
+    if ($repoFree -ge 8GB) { return $repoStage }
+    $bestLetter = $null
+    $bestFree = $repoFree
+    foreach ($letter in @("F", "D", "C", "E")) {
+        if (-not (Test-Path -LiteralPath ($letter + ":\"))) { continue }
+        $free = Get-VolumeFreeBytes -Path ($letter + ":\")
+        if ($free -gt $bestFree) {
+            $bestFree = $free
+            $bestLetter = $letter
+        }
+    }
+    if ($bestLetter -and $bestFree -ge 2GB) {
+        return ($bestLetter + ":\aetheris-adb-stage")
+    }
+    return $repoStage
+}
+
 function Write-AcquireLog {
     param([string]$LogPath, [string]$Message)
     if (-not $LogPath) { return }
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
-    Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+    $payload = [System.Text.Encoding]::UTF8.GetBytes($line + "`r`n")
+    $safe = ($LogPath.ToLowerInvariant() -replace '[^a-z0-9]', '_')
+    if ($safe.Length -gt 80) { $safe = $safe.Substring($safe.Length - 80) }
+    $mutex = $null
+    $held = $false
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, ("Local\AetherisAcquireLog_" + $safe))
+        $held = $mutex.WaitOne(2000)
+    } catch {
+        $held = $false
+    }
+    try {
+        for ($tryN = 0; $tryN -lt 6; $tryN++) {
+            $stream = $null
+            try {
+                $dir = Split-Path -Parent $LogPath
+                if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+                    New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue | Out-Null
+                }
+                # Share read and write so a log viewer cannot lock the collection out.
+                $stream = [System.IO.File]::Open(
+                    $LogPath,
+                    [System.IO.FileMode]::Append,
+                    [System.IO.FileAccess]::Write,
+                    [System.IO.FileShare]::ReadWrite)
+                $stream.Write($payload, 0, $payload.Length)
+                $stream.Flush()
+                return
+            } catch {
+                Start-Sleep -Milliseconds (50 * ($tryN + 1))
+            } finally {
+                if ($stream) { try { $stream.Dispose() } catch {} }
+            }
+        }
+    } finally {
+        if ($held -and $mutex) { try { [void]$mutex.ReleaseMutex() } catch {} }
+        if ($mutex) { try { $mutex.Dispose() } catch {} }
+    }
 }
 
 function Get-ShellPortableDeviceItem {
@@ -1280,7 +1358,7 @@ function Test-AdbRemoteExists {
 
 function Restore-AdbStageIntoCase {
     param([string]$Original, [string]$LogPath = "", [string]$ProgressFile = "")
-    $stageRoot = Join-Path (Get-RepoRoot) "ap"
+    $stageRoot = Get-AdbStageRoot
     if (-not (Test-Path -LiteralPath $stageRoot)) { return 0 }
     $destRoot = Join-Path $Original "adb_logical\filesystem\sdcard"
     New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
@@ -1303,6 +1381,11 @@ function Invoke-AdbLinkOrCopy {
         Write-AdbProgress -ProgressFile $ProgressFile -Remote $Stage -Files ([int]$dstStats.files) -Bytes ([int64]$dstStats.bytes)
         return [int]$dstStats.files
     }
+    if ([int]$srcStats.files -gt 0 -and -not (Test-VolumeRoom -Path $FinalDir -MinBytes 1GB)) {
+        $script:AdbDiskNote = ("Case volume has no free space. {0} file(s) stay in staging at {1}. Free space on the case drive, then retry so they can be copied into the case." -f $srcStats.files, $Stage)
+        Write-AdbProgress -ProgressFile $ProgressFile -Remote $Stage -Files ([int]$srcStats.files) -Bytes ([int64]$srcStats.bytes)
+        return [Math]::Max([int]$dstStats.files, [int]$srcStats.files)
+    }
     $copied = Invoke-PyTreeJson -ExtraArgs @("--copy-src", $Stage, "--copy-dst", $FinalDir, "--progress", $ProgressFile)
     if ($copied -and [int]$copied.files -gt 0) { return [int]$copied.files }
     try {
@@ -1322,7 +1405,7 @@ function Invoke-AdbPullShort {
         [int]$IdleZeroSec = 35,
         [int]$MaxSec = 2400
     )
-    $stageRoot = Join-Path (Get-RepoRoot) "ap"
+    $stageRoot = Get-AdbStageRoot
     $stage = Join-Path $stageRoot $Tag
     New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
     $remoteExists = Test-AdbRemoteExists -Adb $Adb -RemoteDir $RemoteDir
@@ -1448,7 +1531,7 @@ function Invoke-AndroidAdbAcquire {
     $sharedDir = Join-Path $fsDir "sdcard"
     New-Item -ItemType Directory -Force -Path $sharedDir | Out-Null
     $sharedComplete = $false
-    $seedStage = Get-DirFileStats -Dir (Join-Path (Get-RepoRoot) "ap")
+    $seedStage = Get-DirFileStats -Dir (Get-AdbStageRoot)
     if ([int]$seedStage.files -gt 0) {
         Write-AdbProgress -ProgressFile $ProgressFile -Remote "reused staging" -Files ([int]$seedStage.files) -Bytes ([int64]$seedStage.bytes)
         Write-AcquireLog $LogPath ("Staging already has {0} file(s) / {1} byte(s) from earlier pulls." -f $seedStage.files, $seedStage.bytes)
@@ -1506,14 +1589,33 @@ function Invoke-AndroidAdbAcquire {
     }
     if (-not $pullList.Contains("/sdcard/Android/data")) { $pullList.Add("/sdcard/Android/data") | Out-Null }
     Write-AcquireLog $LogPath ("Pulling {0} shared-storage tree(s) via short-path adb pull (no tar)." -f $pullList.Count)
+    $pulledOk = New-Object System.Collections.Generic.List[string]
     foreach ($remote in $pullList) {
+        $coveredBy = ""
+        foreach ($done in $pulledOk) {
+            $prefix = $done.TrimEnd('/') + '/'
+            if ($remote.StartsWith($prefix)) { $coveredBy = $done; break }
+        }
+        if ($coveredBy) {
+            Write-AcquireLog $LogPath ("Skipping {0} - already inside pulled tree {1}." -f $remote, $coveredBy)
+            continue
+        }
+        $stageRootNow = Get-AdbStageRoot
+        if (-not (Test-VolumeRoom -Path $stageRootNow -MinBytes 2GB)) {
+            $script:AdbDiskNote = ("Stopped further phone copies because the staging volume has under 2 GB free ({0}). Files already copied are kept." -f $stageRootNow)
+            Write-AcquireLog $LogPath $script:AdbDiskNote
+            break
+        }
         $tag = (($remote -replace '\\','/') -replace '[/:*?<>|"]','_').Trim('_')
         $dest = Join-Path $sharedDir $tag
         Write-AcquireLog $LogPath ("Pulling {0} (keep the phone unlocked)..." -f $remote)
         $maxSec = 2400
         if ($remote -match '(?i)whatsapp') { $maxSec = 3600 }
         $n = Invoke-AdbPullShort -Adb $adb -RemoteDir $remote -FinalDir $dest -LogPath $LogPath -Tag $tag -ProgressFile $ProgressFile -MaxSec $maxSec
-        if ($n -gt 0) { $sharedComplete = $true }
+        if ($n -gt 0) {
+            $sharedComplete = $true
+            $pulledOk.Add($remote) | Out-Null
+        }
     }
 
     $appDataDir = Join-Path $OutDir "logical\app_data"
@@ -1740,6 +1842,7 @@ function Invoke-AndroidAdbAcquire {
         sms_ok           = [bool]$smsOk
         shared_complete  = [bool]$sharedComplete
         ffs_attempted    = [bool]$ffsAttempted
+        disk_note        = [string]$script:AdbDiskNote
     }
 }
 

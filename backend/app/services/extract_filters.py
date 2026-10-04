@@ -442,6 +442,28 @@ def _is_forensic_user_evidence_path(p: str) -> bool:
     return any(h in p for h in FORENSIC_USER_EVIDENCE_HINTS)
 
 
+def _is_regenerable_user_noise(p: str) -> bool:
+    """Cache and package trees whose contents can be rebuilt and carry no case facts."""
+    return any(
+        s in p
+        for s in (
+            "/inetcache/",
+            "/temporary internet files/",
+            "/webcache/",
+            "/d3dscache/",
+            "/iconcache",
+            "/thumbcache_",
+            "/appdata/local/pip/",
+            "/appdata/local/nuget/",
+            "/appdata/local/yarn/",
+            "/appdata/local/pnpm/",
+            "/crashdumps/",
+            "/dawngraphitecache/",
+            "/dawnwebgpucache/",
+        )
+    )
+
+
 def _is_user_noise(p: str) -> bool:
     if _is_forensic_user_evidence_path(p):
         return False
@@ -596,8 +618,15 @@ def matches_defensible_include(
     if _special_name_match(base):
         return True
 
-    # User profiles — keep unknown / extensionless / non-OS-binary even in noisy subfolders
+    # User profiles — keep real documents and extensionless unknowns (a dropper
+    # with no extension in Temp is still evidence). Do not re-include regenerable
+    # cache bodies that the forensic rules already classified as noise.
     if p.startswith("users/") or p.startswith("documents and settings/"):
+        if _is_user_noise(p):
+            if ext in FORENSIC_EXTENSIONS or _special_name_match(base):
+                return True
+            if any(seg in p for seg in _CACHE_SEGMENTS) or _is_regenerable_user_noise(p):
+                return False
         if ext in SYSTEM_BINARY_EXTENSIONS and size_bytes > 524_288:
             return False
         return True
