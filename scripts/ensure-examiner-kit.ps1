@@ -6,7 +6,7 @@
 #   tools\platform-tools\  - Google adb (Android)
 # Optionally installs Apple Mobile Device Support via winget (iPhone USB driver).
 #
-# Called by start-server.ps1 / startup.ps1 / ensure-host-drive-helper.ps1
+# Called by startup.ps1 / ensure-host-drive-helper.ps1 / start-stack.ps1
 param(
     [switch]$Force
 )
