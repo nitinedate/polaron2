@@ -87,3 +87,15 @@ dropped that behaviour, which is why it passed in testing.)
 | `scripts/start-stack.ps1` | the two pre-existing `docker logs ... 2>&1` dumps in error paths use the helper too |
 | `scripts/stage-evidence.ps1` | shell script is written to a temp file and bind-mounted instead of passed as a quoted argument (5.1 mangles embedded quotes); `.evidence-staging` marker so `/host/z` is never an empty stub |
 | `diagnostics/lint_ps1_native_stderr.py` | NEW - fails on `2>&1` under Stop without a preference guard, and on non-ASCII in code lines; run on any .ps1 change |
+
+## V45.4a - laptop still running the pre-V45 agent (same 3-info / plugin_errors=1 / ~380 s signature)
+The log carried no `coverage_retry` event and no `coverage=` field on `completed`, so the container was
+executing the old code. Three layers so this can neither hide nor recur:
+| File | Change |
+|---|---|
+| `laptop-scanner/scanner-agent/agent/__init__.py` | `AGENT_BUILD = "1.5.1-v45.4"` |
+| `laptop-scanner/scanner-agent/agent/main.py` | startup banner `AGENT BUILD ... plugins_timeout=320s scanner_plugins_timeout=36000s coverage_guard=on`; heartbeat version `1.5.1+v45.4`; **refuses to claim jobs** (logs `DEGRADED SCAN CONFIG` every 60 s) when `scanner_plugins_timeout < 1800` or `plugins_timeout < 120` unless `ALLOW_DEGRADED_SCAN=true`; every `completed` event carries `agent_build` |
+| `laptop-scanner/Deploy-V45-Laptop.cmd` | NEW - aborts if run from a stale folder/.env, recreates configure-openvas/openvasd/openvas/ospd-openvas/scanner-agent, prints openvas.conf + the banner |
+| `laptop-scanner/Verify-V45-Deployed.cmd` | checks the build stamp inside the running container |
+| `backend/app/services/scanner_agent_jobs.py` | central guard: an upload with no coverage data but scanner errors and <= 3 all-info results per host is marked **incomplete** per IP (`degraded_legacy_signature`) - a legacy agent can never produce a green row again |
+| `laptop-scanner/.env` | `ALLOW_DEGRADED_SCAN=false` documented |

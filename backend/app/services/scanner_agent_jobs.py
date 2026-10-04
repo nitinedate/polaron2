@@ -1394,6 +1394,26 @@ def ingest_agent_results(
     # V45.4: per-IP coverage from the agent. A host whose port scanner was killed
     # is shown as "incomplete" with the reason, never as a green "completed".
     host_cov = host_coverage if isinstance(host_coverage, dict) else None
+    # V45.4 central guard: an agent that predates the coverage verdict uploads no
+    # host_coverage at all. Recognise the truncated-scan signature anyway
+    # (scanner errors present and <= 3 results per assessed host, all info) and
+    # mark every assessed host incomplete rather than green.
+    if not host_cov and int(plugin_errors or 0) > 0:
+        per_host = int(result_count or 0) / float(max(int(assessed or 0), 1))
+        non_info = 0
+        for v in vulnerabilities or []:
+            sev = str((v or {}).get("severity") or (v or {}).get("threat") or "").strip().lower()
+            if sev and sev not in {"info", "log", "none", "informational", "0", "0.0"}:
+                non_info += 1
+        if per_host <= 3.0 and non_info == 0:
+            reason = (
+                f"legacy agent (no coverage data): {int(result_count or 0)} informational result(s) over "
+                f"{int(assessed or 0)} host(s) with {int(plugin_errors or 0)} scanner error(s) - port scan did not finish"
+            )
+            host_cov = {
+                str(h): {"verdict": "degraded_legacy_signature", "reason": reason, "open_tcp_ports": [], "nvts_launched": 0}
+                for h in assessed_list
+            }
     if isinstance(host_cov, dict) and host_cov:
         tp = dict(orch.get("target_progress") or {}) if isinstance(orch.get("target_progress"), dict) else {}
         degraded_now: list[str] = []

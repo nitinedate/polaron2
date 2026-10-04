@@ -60,6 +60,15 @@ def _read_agent_token() -> str:
     return (os.environ.get("AGENT_TOKEN") or "").strip()
 
 
+def _agent_build() -> str:
+    try:
+        from agent import AGENT_BUILD
+
+        return str(AGENT_BUILD)
+    except Exception:
+        return "unknown"
+
+
 def _read_agent_version() -> str:
     version_file = Path(os.environ.get("AGENT_VERSION_FILE") or "/app/.agent-version")
     try:
@@ -69,7 +78,9 @@ def _read_agent_version() -> str:
                 return value
     except OSError:
         log.warning("Unable to read AGENT_VERSION_FILE=%s; falling back to environment", version_file)
-    return (os.environ.get("AGENT_VERSION") or "1.5.0").strip() or "1.5.0"
+    base = (os.environ.get("AGENT_VERSION") or "1.5.0").strip() or "1.5.0"
+    build = _agent_build()
+    return base if build == "unknown" or base.endswith(build.split("-", 1)[-1]) else f"{base}+{build.split('-', 1)[-1]}"
 
 
 def _cfg() -> dict[str, Any]:
@@ -1085,7 +1096,7 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                             finished_idxs.append(idx)
                             emit_ip_event(
                                 job_id, host, "completed", task_id=tid, progress=100,
-                                coverage=cov_verdict,
+                                coverage=cov_verdict, agent_build=_agent_build(),
                                 vulnerabilities=len(details.get("vulnerabilities") or []),
                                 report_id=(details.get("evidence") or {}).get("report_id"),
                                 report_results=(details.get("evidence") or {}).get("report_result_count"),
@@ -1324,6 +1335,39 @@ def main() -> None:
         cfg["high_progress_warn_sec"],
         cfg["max_scan_runtime_sec"],
     )
+    # V45.4: unmistakable build + effective scan profile, then a hard self-check.
+    # A truncating profile (port scanner killed before it finishes) produces 3
+    # info results per host with plugin_errors=1 and looks "completed". Never run
+    # that silently: refuse to claim jobs until the config is fixed.
+    try:
+        from agent import AGENT_BUILD
+    except Exception:
+        AGENT_BUILD = "unknown"
+    degraded_retry = int(os.environ.get("SCAN_DEGRADED_RETRY") or 1)
+    log.info(
+        "AGENT BUILD %s | port_profile=%s udp_profile=%s plugins_timeout=%ss scanner_plugins_timeout=%ss "
+        "optimize_test=%s max_checks=%s coverage_guard=on degraded_retry=%d",
+        AGENT_BUILD,
+        getattr(openvas, "port_profile", "?"),
+        getattr(openvas, "udp_profile", "?"),
+        getattr(openvas, "plugins_timeout", "?"),
+        getattr(openvas, "scanner_plugins_timeout", "?"),
+        getattr(openvas, "optimize_test", "?"),
+        getattr(openvas, "max_checks", "?"),
+        degraded_retry,
+    )
+    allow_degraded = (os.environ.get("ALLOW_DEGRADED_SCAN") or "false").strip().lower() in {"1", "true", "yes", "on"}
+    spt = int(getattr(openvas, "scanner_plugins_timeout", 0) or 0)
+    pt = int(getattr(openvas, "plugins_timeout", 0) or 0)
+    while (spt < 1800 or pt < 120) and not allow_degraded:
+        log.error(
+            "DEGRADED SCAN CONFIG - scanner_plugins_timeout=%ss plugins_timeout=%ss would kill the port-scanner "
+            "NVT before a full-port sweep finishes (hosts finish with ~3 informational results). "
+            "Set SCANNER_PLUGINS_TIMEOUT_SEC=36000 and PLUGINS_TIMEOUT_SEC=320 in laptop-scanner/.env and "
+            "recreate scanner-agent (Deploy-V45-Laptop.cmd). Not claiming jobs. Override: ALLOW_DEGRADED_SCAN=true",
+            spt, pt,
+        )
+        time.sleep(60)
     log.info(
         "Capacity policy: jobs=%d (configured=%d) ip_workers=%d chunk_size=%d "
         "thermal=%s cpu_temp=%sC load_ratio=%.2f SCAN_IP_PARALLELISM=%s; queue-poll=%ss; "
