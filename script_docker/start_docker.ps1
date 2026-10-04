@@ -266,9 +266,7 @@ function Test-RunningContainers {
         "aetheris-vuln",
         "aetheris-gateway"
     )
-    # gvm-tools is the Greenbone CLI image (entrypoint + bash). With no command it
-    # exits 0 immediately; it is not a service that should stay running.
-    $oneShot = 'ollama-init|configure-openvas|pg-gvm-migrator|gpg-data|acme-bootstrap|certbot|gvm-tools'
+    $oneShot = 'ollama-init|configure-openvas|pg-gvm-migrator|gpg-data|acme-bootstrap|certbot'
     $failed = @()
     $pending = 0
     $running = 0

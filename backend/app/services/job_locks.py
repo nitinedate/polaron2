@@ -538,6 +538,49 @@ def _gpu_heavy_configured_slots() -> int:
         return 1
 
 
+def describe_gpu_lane_state() -> str:
+    """Human-readable reason the GPU lane could not be taken (V45.1).
+
+    Distinguishes the three cases that previously all read "timed out after 0s":
+    held by another GPU task (who / how long), thermal pause (capacity 0), or a
+    stale lease that is about to be reclaimed.
+    """
+    try:
+        cap = _gpu_heavy_max_slots()
+    except Exception:
+        cap = -1
+    parts: list[str] = []
+    try:
+        for key in _gpu_slot_keys():
+            holder = _lock_held(key)
+            if not holder:
+                continue
+            age = time.time() - float(holder.get("started") or time.time())
+            stale = heavy_holder_is_stale(holder)
+            parts.append(
+                f"lane held by {holder.get('reason') or '?'} (pid {holder.get('pid') or '?'}, "
+                f"{age:.0f}s{', STALE — will be reclaimed' if stale else ''})"
+            )
+    except Exception:
+        pass
+    if cap == 0:
+        temp = None
+        try:
+            from app.services.adaptive_semaphore import _host_snapshot
+
+            temp = getattr(_host_snapshot(), "gpu_temp_c", None)
+        except Exception:
+            pass
+        parts.append(
+            f"GPU admission paused by thermal guard (capacity 0"
+            + (f", temp {int(temp)}°C ≥ GPU_THERMAL_PAUSE_C" if temp is not None else "")
+            + ")"
+        )
+    if not parts:
+        parts.append(f"no holder visible, capacity={cap} — likely released between checks; retry will succeed")
+    return "; ".join(parts)
+
+
 def _gpu_heavy_max_slots() -> int:
     """Live GPU admission capacity (may be zero at the thermal pause point)."""
     configured = _gpu_heavy_configured_slots()
@@ -1098,6 +1141,7 @@ def gpu_heavy_slot(
 
         if local_lease is None:
             msg = f"GPU local slot wait timed out for {reason} after {wait_budget:.0f}s"
+            msg += f" — {describe_gpu_lane_state()}"
             if fail_closed:
                 raise GpuHeavySlotTimeout(msg)
             log.warning("%s", msg)

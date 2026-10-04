@@ -884,7 +884,24 @@ def _index_job_evidence(
     from app.services.job_locks import gpu_heavy_slot
 
     reset_embed_duty_counter()
-    use_cuda = (settings.rag_embedding_device or "").lower() in ("cuda", "gpu", "auto")
+    # V45.1: only reserve the exclusive GPU lane when this pass will actually embed.
+    # With RAG_EMBEDDING_ENABLED=false the pass is CPU chunking only, but the old
+    # test (device == cuda) still took the single GPU permit, collided with OCR,
+    # failed the one-shot acquire and re-queued itself every 120 s:
+    #   "RAG deferred — GPU slot busy (GPU local slot wait timed out ... after 0s)"
+    embed_enabled = bool(getattr(settings, "rag_embedding_enabled", False))
+    use_cuda = embed_enabled and (settings.rag_embedding_device or "").lower() in ("cuda", "gpu", "auto")
+    if not embed_enabled:
+        write_disk_log(
+            db,
+            job_id,
+            "RAG chunking on CPU — embeddings disabled (RAG_EMBEDDING_ENABLED=false); no GPU lane needed, "
+            "runs alongside OCR",
+            stage="rag_index",
+        )
+        db.commit()
+        if schema_name:
+            apply_firm_search_path(db, schema_name)
 
     with ExitStack() as stack:
         if use_cuda:
