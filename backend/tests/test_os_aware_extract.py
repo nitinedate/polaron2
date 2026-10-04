@@ -152,6 +152,24 @@ def test_defensible_includes_uncertain_user_and_programdata_files():
     )
     assert ok and why is None
 
+    # Regenerable cache bodies are not evidence, including in defensible mode.
+    ok, why = should_extract_node(
+        "Users/Bob/AppData/Local/Google/Chrome/User Data/Default/Cache/data_0",
+        4096,
+        mode="defensible",
+        max_file_bytes=0,
+        os_family="windows",
+    )
+    assert ok is False and why == "defensible_filter"
+    ok, why = should_extract_node(
+        "Users/Bob/AppData/Local/Microsoft/Windows/INetCache/IE/abc",
+        4096,
+        mode="defensible",
+        max_file_bytes=0,
+        os_family="windows",
+    )
+    assert ok is False and why == "defensible_filter"
+
     ok, why = should_extract_node(
         "Windows/WinSxS/amd64_microsoft/foo.dll",
         4096,
