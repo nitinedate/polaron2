@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import clsx from "clsx";
 import {
@@ -17,7 +17,6 @@ import {
   Radar,
   ScrollText,
   Search,
-  Settings,
   ShieldAlert,
   ShieldCheck,
   Smartphone,
@@ -252,31 +251,26 @@ function resolveTitle(pathname: string): string {
   return TITLES[pathname] || "Console";
 }
 
-function SettingsNav({ onNavigate }: { onNavigate?: () => void }) {
-  const location = useLocation();
+function SettingsNav({
+  open,
+  onToggle,
+  onNavigate,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onNavigate?: () => void;
+}) {
   const { theme, setTheme, themes } = useTheme();
-  const onSettings = location.pathname.startsWith("/settings");
-  const [open, setOpen] = useState(onSettings);
-
-  useEffect(() => {
-    if (onSettings) setOpen(true);
-  }, [onSettings]);
 
   return (
     <div>
-      <p className="px-2 pb-2 text-[11px] font-bold uppercase tracking-wider text-ink-400">Settings</p>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
-        className={clsx(
-          "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
-          open || onSettings
-            ? "bg-brand-50 text-brand-900 shadow-panel ring-1 ring-brand-200"
-            : "text-ink-500 hover:bg-accent-50/70 hover:text-ink-800"
-        )}
+        onClick={onToggle}
+        aria-expanded={open}
+        className="mb-1 flex w-full items-center rounded-xl px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-ink-400 hover:bg-brand-50/70 hover:text-ink-700"
       >
-        <Settings className={clsx("h-[18px] w-[18px]", open || onSettings ? "text-brand-600" : "text-ink-400")} />
-        Settings
+        <span className="text-[11px] font-bold uppercase tracking-wider">Settings</span>
         <ChevronDown className={clsx("ml-auto h-4 w-4 transition", open && "rotate-180")} />
       </button>
       {open ? (
@@ -329,7 +323,49 @@ function SettingsNav({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+function NavItems({ items, onNavigate }: { items: NavItem[]; onNavigate?: () => void }) {
+  return (
+    <div className="space-y-1">
+      {items.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.exact || item.to === "/"}
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            clsx(
+              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
+              isActive
+                ? "bg-brand-50 text-brand-900 shadow-panel ring-1 ring-brand-200"
+                : "text-ink-500 hover:bg-accent-50/70 hover:text-ink-800"
+            )
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <item.icon
+                className={clsx("h-[18px] w-[18px]", isActive ? "text-brand-600" : "text-ink-400")}
+              />
+              {item.label}
+            </>
+          )}
+        </NavLink>
+      ))}
+    </div>
+  );
+}
+
+function itemMatchesPath(pathname: string, item: NavItem): boolean {
+  if (item.exact || item.to === "/") return pathname === item.to;
+  return pathname === item.to || pathname.startsWith(`${item.to}/`);
+}
+
+function groupMatchesPath(pathname: string, group: NavGroup): boolean {
+  return group.items.some((item) => itemMatchesPath(pathname, item));
+}
+
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+  const location = useLocation();
   const { hasPermission, isPlatformScope } = useAuth();
   const groups = GROUPS.map((group) => ({
     ...group,
@@ -344,6 +380,21 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   })).filter((group) => group.items.length > 0);
   const navGroups = groups.filter((group) => group.title !== "Account");
   const accountGroups = groups.filter((group) => group.title === "Account");
+  const routeTitle = location.pathname.startsWith("/settings")
+    ? "Settings"
+    : [...navGroups, ...accountGroups].find(
+        (group) => group.title !== "Overview" && groupMatchesPath(location.pathname, group)
+      )?.title ?? null;
+  const [chosenTitle, setChosenTitle] = useState<string | null | undefined>(undefined);
+  const [pathSnap, setPathSnap] = useState(location.pathname);
+  if (pathSnap !== location.pathname) {
+    setPathSnap(location.pathname);
+    setChosenTitle(undefined);
+  }
+  const openTitle = chosenTitle === undefined ? routeTitle : chosenTitle;
+  const toggleGroup = (title: string) => {
+    setChosenTitle(openTitle === title ? null : title);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -355,76 +406,41 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           Enterprise Console
         </div>
       </div>
-      <nav className="mt-4 flex-1 space-y-6 overflow-y-auto px-4 pb-6">
-        {navGroups.map((group) => (
-          <div key={group.title}>
-            <p className="px-2 pb-2 text-[11px] font-bold uppercase tracking-wider text-ink-400">
-              {group.title}
-            </p>
-            <div className="space-y-1">
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.exact || item.to === "/"}
-                  onClick={onNavigate}
-                  className={({ isActive }) =>
-                    clsx(
-                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
-                      isActive
-                        ? "bg-brand-50 text-brand-900 shadow-panel ring-1 ring-brand-200"
-                        : "text-ink-500 hover:bg-accent-50/70 hover:text-ink-800"
-                    )
-                  }
+      <nav className="relative z-[1] mt-4 flex-1 space-y-3 overflow-y-auto px-4 pb-6">
+        {[...navGroups, { title: "__settings__", items: [] } as NavGroup, ...accountGroups].map((group) => {
+          if (group.title === "__settings__") {
+            return (
+              <SettingsNav
+                key="Settings"
+                open={openTitle === "Settings"}
+                onToggle={() => toggleGroup("Settings")}
+                onNavigate={onNavigate}
+              />
+            );
+          }
+          const pinned = group.title === "Overview";
+          const open = pinned || openTitle === group.title;
+          return (
+            <div key={group.title}>
+              {pinned ? (
+                <p className="px-2 pb-2 text-[11px] font-bold uppercase tracking-wider text-ink-400">
+                  {group.title}
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.title)}
+                  className="mb-1 flex w-full items-center rounded-xl px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-ink-400 hover:bg-brand-50/70 hover:text-ink-700"
+                  aria-expanded={open}
                 >
-                  {({ isActive }) => (
-                    <>
-                      <item.icon
-                        className={clsx("h-[18px] w-[18px]", isActive ? "text-brand-600" : "text-ink-400")}
-                      />
-                      {item.label}
-                    </>
-                  )}
-                </NavLink>
-              ))}
+                  {group.title}
+                  <ChevronDown className={clsx("ml-auto h-4 w-4 shrink-0 transition", open && "rotate-180")} />
+                </button>
+              )}
+              {open ? <NavItems items={group.items} onNavigate={onNavigate} /> : null}
             </div>
-          </div>
-        ))}
-        <SettingsNav onNavigate={onNavigate} />
-        {accountGroups.map((group) => (
-          <div key={group.title}>
-            <p className="px-2 pb-2 text-[11px] font-bold uppercase tracking-wider text-ink-400">
-              {group.title}
-            </p>
-            <div className="space-y-1">
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.exact || item.to === "/"}
-                  onClick={onNavigate}
-                  className={({ isActive }) =>
-                    clsx(
-                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
-                      isActive
-                        ? "bg-brand-50 text-brand-900 shadow-panel ring-1 ring-brand-200"
-                        : "text-ink-500 hover:bg-accent-50/70 hover:text-ink-800"
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      <item.icon
-                        className={clsx("h-[18px] w-[18px]", isActive ? "text-brand-600" : "text-ink-400")}
-                      />
-                      {item.label}
-                    </>
-                  )}
-                </NavLink>
-              ))}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
     </div>
   );
@@ -438,12 +454,12 @@ export function AppLayout() {
 
   return (
     <div className="min-h-screen bg-transparent">
-      <aside className="fixed inset-y-0 left-0 hidden w-[272px] border-r border-ink-300 bg-white/90 shadow-panel backdrop-blur-sm lg:block">
+      <aside className="fixed inset-y-0 left-0 z-[280] hidden w-[272px] border-r border-ink-300 bg-white/95 shadow-panel backdrop-blur-sm lg:block">
         <SidebarContent />
       </aside>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
+        <div className="fixed inset-0 z-[280] lg:hidden">
           <div className="absolute inset-0 bg-ink-950/40" onClick={() => setMobileOpen(false)} />
           <aside className="absolute inset-y-0 left-0 w-[272px] border-r border-ink-300 bg-white shadow-soft">
             <button

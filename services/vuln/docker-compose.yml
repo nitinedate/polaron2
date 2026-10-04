@@ -11,9 +11,12 @@ include:
 x-vuln-env: &vuln-env
   AETHERIS_SERVICE: vuln
   VULN_MODULE_ENABLED: "true"
-  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
-  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/vuln
+  REDIS_URL: redis://redis:6379/3
   DATA_ROOT: /app/data
+  TMPDIR: /app/data/tmp
+  TMP: /app/data/tmp
+  TEMP: /app/data/tmp
   AETHERIS_WORKER: "1"
   IDLE_IN_TRANSACTION_SESSION_TIMEOUT: "0"
   PIPELINE_SUPERVISOR_ENABLED: "false"
@@ -48,40 +51,10 @@ x-vuln-env: &vuln-env
   PENTEST_MODULE_ENABLED: ${PENTEST_MODULE_ENABLED:-true}
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: forensic
-      POSTGRES_PASSWORD: forensic
-      POSTGRES_DB: forensic
-    ports:
-      - "5436:5432"
-    volumes:
-      - vuln_pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forensic -d forensic"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  mailhog:
-    image: mailhog/mailhog:v1.0.1
-    ports:
-      - "1027:1025"
-      - "8027:8025"
-
-  redis:
-    image: redis:7
-    ports:
-      - "6382:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   api:
+    networks:
+      - default
+      - aetheris-common
     image: rag_new2-api
     build:
       context: ./backend
@@ -95,18 +68,15 @@ services:
       PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-admin@123456789}
     ports:
       - "127.0.0.1:8082:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     volumes:
       - ./backend:/app
       - ./scripts:/scripts
       - ./migrations:/migrations
-      - ./data/vuln:/app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/vuln
+        target: /app/data
     command: >
-      sh -c "alembic upgrade head 2>/dev/null || true &&
+      sh -c "mkdir -p /app/data/tmp && alembic upgrade head 2>/dev/null || true &&
              python /scripts/ensure_sql_functions.py &&
              python /scripts/bootstrap_platform_admin.py &&
              uvicorn app.main_vuln:app --host 0.0.0.0 --port 8080"
@@ -124,6 +94,9 @@ services:
       start_period: 180s
 
   worker-nessus:
+    networks:
+      - default
+      - aetheris-common
     image: aetheris-vuln-worker-nessus
     build:
       context: ./backend
@@ -135,13 +108,11 @@ services:
     volumes:
       - ./backend:/app
       - ./scripts:/scripts:ro
-      - ./data/vuln:/app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/vuln
+        target: /app/data
       - gvm_gvmd_socket:/run/gvmd
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       api:
         condition: service_healthy
       gvmd:
@@ -181,5 +152,7 @@ services:
       api:
         condition: service_healthy
 
-volumes:
-  vuln_pgdata:
+networks:
+  aetheris-common:
+    external: true
+    name: aetheris-common

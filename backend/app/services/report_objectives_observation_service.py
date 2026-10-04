@@ -89,6 +89,7 @@ def _agent_safe_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "limitations": plan.get("limitations") or [],
             "knowledge_base_version": plan.get("knowledge_base_version"),
             "reference_exemplar_guidance": plan.get("reference_exemplar_guidance") or {},
+            "document_report_model": plan.get("document_report_model") or {},
         },
         # When an objective-specific live detector exists, its record-level finding is
         # authoritative. Hiding generic KB report results prevents the writer from
@@ -165,7 +166,8 @@ SAFE FALLBACK DRAFT:
 
 WRITING REQUIREMENTS:
 - Use the supplied knowledge-base result and only the facts shown above.
-- The reference_exemplar_guidance was learned from all five supplied examiner reports and includes their safe forensic writing style. Use it only for evidence questions, decision boundaries and writing structure; never copy an example case value or conclusion.
+- The reference_exemplar_guidance was learned from the supplied examiner reports. Use it only for evidence questions, decision boundaries and writing structure; never copy an example case value or conclusion.
+- document_report_model was trained from the physical reports in document_report_model. Run its extraction_queries against the current case's extracted content, then write the observation with its writing_moves. Never copy a fact from those physical reports.
 - Follow the evidence progression: candidate records -> classify/exclude noise -> deduplicate/correlate -> objective-specific finding -> limitation -> simple meaning.
 - Keep access/presence/connection separate from transfer/use/execution/unauthorized intent unless direct evidence supports the stronger claim.
 - When case_fact is present it is the objective-specific result from the full current-case records used by Sections A/B/D. Treat it as authoritative over generic catalog totals or RAG prose.

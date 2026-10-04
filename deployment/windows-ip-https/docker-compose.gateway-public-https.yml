@@ -12,9 +12,9 @@ name: aetheris-gateway
 services:
   gateway:
     ports: !override
-      - "80:80"
-      - "443:443"
-      - "3001:80"
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "127.0.0.1:3001:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

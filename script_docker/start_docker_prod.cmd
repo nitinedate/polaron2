@@ -5,8 +5,10 @@ cd /d "%~dp0.."
 
 echo.
 echo  Building and starting Aetheris for the production host.
-echo  https://122.179.141.248
+echo  Nginx is configured automatically for internet HTTPS:
+echo    https://122.179.141.248
 echo  The SSL certificate is created when it is missing.
+echo  Ports 80 and 443 listen on this PC. Forward those ports from the router.
 echo  Add cache to rebuild images without the Docker layer cache.
 echo.
 

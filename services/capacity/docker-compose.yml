@@ -1,19 +1,5 @@
-# Host-wide coordinator used only for adaptive CPU/GPU semaphores.
-# It stores leases, not forensic evidence or job data.
+# CPU/GPU semaphore leases now use the shared Redis in services/common
+# (logical database 15, host port 6380). Do not start a second Redis here.
 name: aetheris-capacity
-services:
-  redis-capacity:
-    image: redis:7
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
-    ports:
-      - "127.0.0.1:6389:6379"
-    volumes:
-      - capacity_redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-volumes:
-  capacity_redis:
+
+services: {}

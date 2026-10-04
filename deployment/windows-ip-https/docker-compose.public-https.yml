@@ -1,23 +1,5 @@
 services:
-  # Keep infrastructure/admin ports on the Windows host only. They remain
-  # available to containers over the Compose network by service name.
-  postgres:
-    ports: !override
-      - "127.0.0.1:5434:5432"
-
-  pgadmin:
-    ports: !override
-      - "127.0.0.1:${PGADMIN_PORT:-5052}:80"
-
-  mailhog:
-    ports: !override
-      - "127.0.0.1:1025:1025"
-      - "127.0.0.1:8025:8025"
-
-  redis:
-    ports: !override
-      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
-
+  # Postgres, Redis, MinIO, pgAdmin, and MailHog are the shared aetheris-common stack.
   ollama:
     ports: !override
       - "127.0.0.1:11434:11434"
@@ -30,11 +12,6 @@ services:
   opensearch:
     ports: !override
       - "127.0.0.1:9200:9200"
-
-  minio:
-    ports: !override
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
 
   api:
     # Local debugging is still available at http://127.0.0.1:8080.

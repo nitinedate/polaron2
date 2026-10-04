@@ -67,7 +67,12 @@ def test_compose_has_physical_data_and_queue_isolation():
     assert aenv["AETHERIS_SERVICE"] == "mobile-android"
     assert ienv["AETHERIS_SERVICE"] == "mobile-ios"
     assert aenv["DATABASE_URL"] != ienv["DATABASE_URL"]
-    assert aenv["REDIS_URL"] == ienv["REDIS_URL"] == "redis://redis:6379/0"  # separate compose networks
+    assert aenv["REDIS_URL"] == "redis://redis:6379/1"
+    assert ienv["REDIS_URL"] == "redis://redis:6379/2"
+    assert "postgres" not in android["services"]
+    assert "redis" not in android["services"]
+    assert "minio" not in android["services"]
+    assert "postgres" not in ios["services"]
     assert "mobile-android" in aenv["MINIO_BUCKET"]
     assert "mobile-ios" in ienv["MINIO_BUCKET"]
     assert android["volumes"].keys().isdisjoint(ios["volumes"].keys())
@@ -90,10 +95,15 @@ def test_shared_capacity_is_leases_only_and_not_job_broker():
     for service in ("mobile-android", "mobile-ios"):
         data = yaml.safe_load((ROOT / f"services/{service}/docker-compose.yml").read_text())
         env = data["x-mobile-env"]
-        assert "6389" in env["RESOURCE_GOVERNOR_REDIS_URL"]
-        assert env["REDIS_URL"] == "redis://redis:6379/0"
-    capacity = yaml.safe_load((ROOT / "services/capacity/docker-compose.yml").read_text())
-    assert capacity["services"]["redis-capacity"]["ports"] == ["127.0.0.1:6389:6379"]
+        assert env["RESOURCE_GOVERNOR_REDIS_URL"].endswith("/15")
+        assert env["REDIS_URL"] != env["RESOURCE_GOVERNOR_REDIS_URL"]
+    common = yaml.safe_load((ROOT / "services/common/docker-compose.yml").read_text())
+    for name in ("postgres", "redis", "minio", "pgadmin"):
+        assert name in common["services"]
+    assert common["services"]["postgres"]["ports"] == ["127.0.0.1:5434:5432"]
+    assert common["services"]["redis"]["ports"] == ["127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"]
+    assert common["services"]["minio"]["ports"] == ["127.0.0.1:9004:9000", "127.0.0.1:9005:9005"]
+    assert "5052" in common["services"]["pgadmin"]["ports"][0]
 
 
 def test_mobile_ui_does_not_reuse_disk_job_detail():

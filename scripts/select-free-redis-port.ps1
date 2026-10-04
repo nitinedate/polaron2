@@ -17,9 +17,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $envPath = Join-Path $root '.env'
 
-# Ports used by other isolated Aetheris Redis services. Do not auto-select them.
+# One shared Redis publishes REDIS_HOST_PORT. Product brokers use logical DBs on it.
 $reserved = [System.Collections.Generic.HashSet[int]]::new()
-@(6381, 6382, 6389, 6391, 6392) | ForEach-Object { [void]$reserved.Add($_) }
 
 function Test-TcpPortAvailable {
     param([Parameter(Mandatory=$true)][int]$Port)

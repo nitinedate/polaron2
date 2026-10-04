@@ -153,6 +153,11 @@ def _rewrite_beat_schedule(argv: list[str]) -> list[str]:
 
 
 def main() -> None:
+    # Keep tempfile/scratch on the host backup mount, not the container layer.
+    tmp = os.environ.get("TMPDIR") or os.environ.get("TMP")
+    if tmp:
+        os.makedirs(tmp, exist_ok=True)
+
     # Ensure backend is importable when cwd varies
     app_root = os.environ.get("PYTHONPATH", "/app")
     if app_root and app_root not in sys.path:

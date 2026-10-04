@@ -1,14 +1,12 @@
-# Ensure the shared host CPU/GPU capacity Redis is listening on 127.0.0.1:6389.
-# Product workers (forensic / mobile-extract / vuln) use
-# RESOURCE_GOVERNOR_REDIS_URL=redis://host.docker.internal:6389/0 for fail-closed
-# admission. Without this container, extract tasks retry forever with:
-#   CpuHeavySlotTimeout('resource governor unavailable: ... 6389 ...')
+# Ensure the shared Redis (services/common) is up.
+# Product workers use redis://redis:6379/15 for CPU/GPU semaphore leases.
+# Host tools can use redis://127.0.0.1:6380/15.
 #
 # Usage (from repo root):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ensure-capacity.ps1
 
 param(
-    [int]$WaitTimeoutSec = 60
+    [int]$WaitTimeoutSec = 180
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,10 +21,10 @@ function Resolve-Docker {
 }
 
 $docker = Resolve-Docker
-Write-Host "Ensuring shared capacity coordinator on 127.0.0.1:6389..." -ForegroundColor Cyan
-& $docker compose --project-directory $root --project-name aetheris-capacity `
-    -f services/capacity/docker-compose.yml up -d --wait --wait-timeout $WaitTimeoutSec
+Write-Host "Ensuring shared infrastructure (Postgres, Redis, MinIO, pgAdmin, MailHog)..." -ForegroundColor Cyan
+& $docker compose --project-directory $root --project-name aetheris-common `
+    -f services/common/docker-compose.yml up -d --wait --wait-timeout $WaitTimeoutSec postgres redis minio pgadmin mailhog
 if ($LASTEXITCODE -ne 0) {
-    throw "aetheris-capacity startup failed (exit $LASTEXITCODE)"
+    throw "aetheris-common startup failed (exit $LASTEXITCODE)"
 }
-Write-Host "Capacity Redis healthy on 127.0.0.1:6389" -ForegroundColor Green
+Write-Host "Shared Redis is healthy on 127.0.0.1:6380 (leases use logical database 15)." -ForegroundColor Green

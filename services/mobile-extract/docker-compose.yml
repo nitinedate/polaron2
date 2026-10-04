@@ -2,7 +2,7 @@
 # Independent of forensic and vuln. From repo root:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ensure-capacity.ps1
 #   docker compose -f services/mobile-extract/docker-compose.yml --project-directory . up -d --build
-# Capacity Redis on 127.0.0.1:6389 is required (RESOURCE_GOVERNOR_REDIS_URL); without it,
+# Shared Redis is services/common (logical DB 15 for the resource governor). Without it,
 # extract tasks retry with CpuHeavySlotTimeout / "resource governor unavailable".
 name: aetheris-mobile-extract
 
@@ -14,15 +14,17 @@ x-gpu: &gpu
 
 x-extract-volumes: &extract-volumes
   - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-  - ./data/mobile-extract/job-data:/app/data
+  - type: bind
+    source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/mobile-extract/job-data
+    target: /app/data
 
 x-extract-env: &extract-env
   AETHERIS_SERVICE: mobile-extract
   VULN_MODULE_ENABLED: "false"
-  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
-  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/mobile_extract
+  REDIS_URL: redis://redis:6379/4
   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
-  RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://host.docker.internal:6389/0}
+  RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
   RESOURCE_GOVERNOR_GROUP: ${RESOURCE_GOVERNOR_GROUP:-aetheris-host}
   RESOURCE_GOVERNOR_FAIL_OPEN_ON_UNAVAILABLE: ${RESOURCE_GOVERNOR_FAIL_OPEN_ON_UNAVAILABLE:-true}
   RESOURCE_GOVERNOR_CPU_MAX_SLOTS: ${RESOURCE_GOVERNOR_CPU_MAX_SLOTS:-10}
@@ -35,6 +37,9 @@ x-extract-env: &extract-env
   HOST_EVIDENCE_ENABLED: ${HOST_EVIDENCE_ENABLED:-true}
   HOST_DRIVE_HELPER_URL: ${HOST_DRIVE_HELPER_URL:-http://host.docker.internal:9876}
   DATA_ROOT: /app/data
+  TMPDIR: /app/data/tmp
+  TMP: /app/data/tmp
+  TEMP: /app/data/tmp
   AETHERIS_WORKER: "1"
   IDLE_IN_TRANSACTION_SESSION_TIMEOUT: "0"
   EXTRACT_MOBILE_WORKERS: ${EXTRACT_MOBILE_WORKERS:-12}
@@ -70,61 +75,6 @@ x-extract-env: &extract-env
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: forensic
-      POSTGRES_PASSWORD: forensic
-      POSTGRES_DB: forensic
-    ports:
-      - "5435:5432"
-    volumes:
-      - mobile_pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forensic -d forensic"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  mailhog:
-    image: mailhog/mailhog:v1.0.1
-    ports:
-      - "1026:1025"
-      - "8026:8025"
-
-  redis:
-    image: redis:7
-    ports:
-      - "6381:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  minio:
-    # Docker Hub minio/minio was discontinued (Oct 2025); Chainguard publishes a compatible image.
-    image: cgr.dev/chainguard/minio:latest
-    user: "0:0"
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
-    ports:
-      - "9010:9000"
-      - "9011:9001"
-    volumes:
-      - mobile_minio:/data
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
-  # NVIDIA CUDA runtime — stays up so GPU passthrough is live for OCR/RAG workers.
-  # Separate name from forensic rag_new2-nvidia-cuda so both stacks can run.
   nvidia-cuda:
     image: nvidia/cuda:12.6.3-base-ubuntu24.04
     command: ["sh", "-c", "nvidia-smi -L && echo CUDA_OK && exec sleep infinity"]
@@ -162,6 +112,9 @@ services:
       - gpu-test
 
   api:
+    networks:
+      - default
+      - aetheris-common
     image: rag_new2-api
     build:
       context: ./backend
@@ -177,23 +130,18 @@ services:
       - "127.0.0.1:8081:8080"
     # CUDA device is visible; adaptive governor controls heavy GPU admission.
     gpus: all
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
     volumes:
       - ./backend:/app
       - ./scripts:/scripts
       - ./migrations:/migrations
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data/mobile-extract:/app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/mobile-extract
+        target: /app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: >
-      sh -c "alembic upgrade head 2>/dev/null || true &&
+      sh -c "mkdir -p /app/data/tmp && alembic upgrade head 2>/dev/null || true &&
              python /scripts/ensure_sql_functions.py &&
              python /scripts/bootstrap_platform_admin.py &&
              uvicorn app.main_mobile_extract:app --host 0.0.0.0 --port 8080"
@@ -211,6 +159,9 @@ services:
       start_period: 180s
 
   worker-mobile:
+    networks:
+      - default
+      - aetheris-common
     image: rag_new2-api
     build:
       context: ./backend
@@ -225,17 +176,15 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data/mobile-extract:/app/data
-      - ./data/mobile-extract/uploads:/app/data/uploads
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/mobile-extract
+        target: /app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/mobile-extract/uploads
+        target: /app/data/uploads
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
       api:
         condition: service_healthy
     entrypoint:
@@ -253,6 +202,9 @@ services:
       - mobile-build
 
   worker-beat:
+    networks:
+      - default
+      - aetheris-common
     image: rag_new2-api
     build:
       context: ./backend
@@ -269,10 +221,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       api:
         condition: service_healthy
     entrypoint:
@@ -289,6 +237,9 @@ services:
 
   # Mobile OCR must run on CUDA. worker-mobile has no GPU; GLM stays here.
   worker-ocr-gpu:
+    networks:
+      - default
+      - aetheris-common
     image: rag_new2-api
     build:
       context: ./backend
@@ -320,15 +271,15 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data/mobile-extract:/app/data
-      - huggingface_cache:/root/.cache/huggingface
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/mobile-extract
+        target: /app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/huggingface
+        target: /root/.cache/huggingface
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       api:
         condition: service_healthy
       nvidia-cuda:
@@ -350,6 +301,9 @@ services:
 
   # GPU embeddings on rag-index. worker-mobile stays CPU so extract/parse never wait.
   worker-rag-gpu:
+    networks:
+      - default
+      - aetheris-common
     image: rag_new2-api
     build:
       context: ./backend
@@ -379,15 +333,15 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data/mobile-extract:/app/data
-      - huggingface_cache:/root/.cache/huggingface
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/mobile-extract
+        target: /app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/huggingface
+        target: /root/.cache/huggingface
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       api:
         condition: service_healthy
       nvidia-cuda:
@@ -421,9 +375,7 @@ services:
       api:
         condition: service_healthy
 
-volumes:
-  mobile_pgdata:
-  mobile_minio:
-  huggingface_cache:
+networks:
+  aetheris-common:
     external: true
-    name: aetheris-forensic_huggingface_cache
+    name: aetheris-common

@@ -23,7 +23,7 @@ export function Brand({ compact = false, className }: { compact?: boolean; class
           onError={() => setBroken(true)}
           className={clsx(
             "block w-full object-contain object-center",
-            compact ? "max-h-10" : "max-h-[7.25rem]"
+            compact ? "max-h-8" : "max-h-[5.25rem]"
           )}
         />
         {!compact && (

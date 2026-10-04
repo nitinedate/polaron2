@@ -416,6 +416,13 @@ def objective_knowledge_plan(title: str, statement: str = "") -> dict[str, Any]:
         reference_guidance = {}
         reference_fingerprint = None
 
+    try:
+        from app.services.document_report_model import document_model_for_agent
+
+        document_model = document_model_for_agent(title, statement)
+    except Exception:
+        document_model = {}
+
     return {
         "title": str(title or "").strip(),
         "statement": str(statement or "").strip(),
@@ -435,6 +442,7 @@ def objective_knowledge_plan(title: str, statement: str = "") -> dict[str, Any]:
         "knowledge_base_fingerprint": knowledge_base_fingerprint(),
         "reference_exemplar_guidance": reference_guidance,
         "reference_exemplar_fingerprint": reference_fingerprint,
+        "document_report_model": document_model,
         "knowledge_base_counts": {
             "procedures": len(load_knowledge_base().get("procedures", [])),
             "reports": len(load_knowledge_base().get("reports", [])),
@@ -550,6 +558,12 @@ def evidence_questions_for_objective(title: str, statement: str = "") -> list[st
 def rag_terms_for_objective(title: str, statement: str = "") -> list[str]:
     plan = objective_knowledge_plan(title, statement)
     terms: list[str] = [title]
+    try:
+        from app.services.document_report_model import extraction_queries_for_objective
+
+        terms.extend(extraction_queries_for_objective(title, statement))
+    except Exception:
+        pass
     for report in plan["reports"]:
         terms.append(str(report.get("title") or ""))
         terms.append(str(report.get("objective") or ""))

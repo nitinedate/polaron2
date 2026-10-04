@@ -1,17 +1,17 @@
 # Aetheris isolated forensic services
 
-Aetheris now runs Disk, Android, iOS, and Vulnerability workflows as independent products. Android and iOS do **not** share a PostgreSQL database, Celery broker, MinIO evidence bucket, worker queue, or UI route with each other or with Disk forensics.
+Aetheris runs Disk, Android, iOS, and Vulnerability workflows as independent products. They share one Postgres, Redis, MinIO, pgAdmin, and MailHog (`services/common/docker-compose.yml`). Each product still has its own database, Redis logical database, MinIO bucket, worker queues, and UI route.
 
 | Product | Compose file | UI | API | Job/worker namespace |
 |---|---|---:|---:|---|
-| Host capacity coordinator | `services/capacity/docker-compose.yml` | — | Redis `127.0.0.1:6389` | semaphore leases only |
+| Shared infrastructure | `services/common/docker-compose.yml` | pgAdmin `:5052` | Postgres `:5434`, Redis `:6380`, MinIO `:9004` | databases, buckets, and Redis DBs stay separate |
 | Disk Forensics | `services/forensic/docker-compose.yml` | gateway `:3000/:3001` | `:8083` | `disk-*` / forensic queues |
 | Android Forensics | `services/mobile-android/docker-compose.yml` | `:3002` | `:8081` | `android-*` |
 | iOS Forensics | `services/mobile-ios/docker-compose.yml` | `:3004` | `:8084` | `ios-*` |
 | Vulnerabilities | `services/vuln/docker-compose.yml` | gateway | `:8082` | scanner queues |
 | Legacy mobile migration | `services/mobile-extract/docker-compose.yml` | — | legacy `:8081` | `mobile-*` |
 
-The capacity coordinator is the **only intentional cross-product runtime dependency**. It stores short-lived CPU/GPU semaphore leases; it does not store jobs, credentials, evidence, reports, RAG chunks, or acquisition state. This lets the server process several jobs at once while all products negotiate against the same physical CPU/RAM/GPU/thermal capacity.
+CPU/GPU semaphore leases live in the shared Redis logical database 15 (`redis://redis:6379/15`). That database does not store jobs, credentials, evidence, reports, RAG chunks, or acquisition state.
 
 ## Start all current products on Windows
 
@@ -21,7 +21,7 @@ From the repository root:
 .\scripts\start-stack.ps1 -Service all
 ```
 
-This starts the capacity coordinator first, then Disk Forensics, Android Forensics, iOS Forensics, Vulnerabilities, and the gateway. The dedicated mobile UIs remain separate at ports 3002 and 3004.
+This starts the shared infrastructure first, then Disk Forensics, Android Forensics, iOS Forensics, Vulnerabilities, and the gateway. The dedicated mobile UIs remain separate at ports 3002 and 3004.
 
 Start one product:
 

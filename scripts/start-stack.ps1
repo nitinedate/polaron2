@@ -85,20 +85,17 @@ function Start-AetherisService {
     $waves = @()
     if ($Name -eq "forensic") {
         $waves = @(
-            @("postgres", "redis"),
-            @("mailhog", "minio", "neo4j", "opensearch"),
+            @("neo4j", "opensearch"),
             @("ollama"),
             @("ollama-init"),
             @("nvidia-cuda"),
             @("api"),
-            @("worker-disk", "worker-parse", "worker-report", "worker-agent", "worker-beat", "worker-rag-gpu", "worker-ocr-gpu"),
-            @("pgadmin")
+            @("worker-disk", "worker-parse", "worker-report", "worker-agent", "worker-beat", "worker-rag-gpu", "worker-ocr-gpu")
         )
     }
     elseif ($Name -eq "mobile-android" -or $Name -eq "mobile-ios") {
         $waves = @(
-            @("postgres", "redis"),
-            @("minio", "nvidia-cuda"),
+            @("nvidia-cuda"),
             @("api"),
             @("worker-build", "worker-parse", "worker-rag", "worker-ocr", "worker-report", "worker-beat"),
             @("frontend")
@@ -106,15 +103,13 @@ function Start-AetherisService {
     }
     elseif ($Name -eq "mobile-extract") {
         $waves = @(
-            @("postgres", "redis"),
-            @("mailhog", "minio"),
             @("nvidia-cuda"),
             @("api"),
             @("worker-mobile", "worker-beat", "worker-ocr-gpu", "worker-rag-gpu")
         )
     }
     elseif ($Name -eq "vuln") {
-        $infra = @("postgres", "redis", "mailhog")
+        $infra = @()
         $scanners = @()
         if (-not $NoScanners) { $scanners += @("zap", "trivy") }
         if ($useGvm) {
@@ -243,14 +238,30 @@ try {
         throw "Missing $backendMain - restore backend source before starting (bind-mount would hide the image app)."
     }
 
-    # The coordinator stores semaphore leases only; product databases/brokers remain isolated.
-    Write-Host "Starting shared CPU/GPU capacity coordinator on 127.0.0.1:6389..." -ForegroundColor Cyan
-    $capacityArgs = @(
-        "compose", "--project-directory", $root, "--project-name", "aetheris-capacity",
-        "-f", "services/capacity/docker-compose.yml", "up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "120"
+    Write-Host "Starting shared Postgres, Redis, MinIO, pgAdmin, and MailHog..." -ForegroundColor Cyan
+    & (Join-Path $root "scripts\move-processing-data-to-backup.ps1")
+    foreach ($volumeName in @("aetheris-forensic_pgdata", "aetheris-forensic_pgadmin_data")) {
+        & $docker volume inspect $volumeName 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            & $docker volume create $volumeName | Out-Null
+        }
+    }
+    $commonArgs = @(
+        "compose", "--project-directory", $root, "--project-name", "aetheris-common",
+        "-f", "services/common/docker-compose.yml"
     )
-    & $docker @capacityArgs
-    if ($LASTEXITCODE -ne 0) { throw "capacity coordinator startup failed (exit $LASTEXITCODE)" }
+    & $docker @commonArgs @("up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "180", "postgres", "redis", "minio", "pgadmin", "mailhog")
+    if ($LASTEXITCODE -ne 0) { throw "shared infrastructure startup failed (exit $LASTEXITCODE)" }
+    & $docker @commonArgs @("up", "-d", "--force-recreate", "--no-deps", "postgres-ensure")
+    if ($LASTEXITCODE -ne 0) { throw "database ensure failed to start (exit $LASTEXITCODE)" }
+    $ensureId = (& $docker @commonArgs @("ps", "-aq", "postgres-ensure") | Select-Object -First 1)
+    if (-not $ensureId) { throw "postgres-ensure container was not created" }
+    $ensureCode = & $docker wait $ensureId
+    if ($LASTEXITCODE -ne 0 -or [int]$ensureCode -ne 0) {
+        & $docker logs --tail 40 $ensureId
+        throw "postgres-ensure exited with code $ensureCode"
+    }
+    Write-Host "Shared infrastructure is up. Postgres 127.0.0.1:5434, Redis 127.0.0.1:6380, MinIO 127.0.0.1:9004, pgAdmin 127.0.0.1:5052." -ForegroundColor Green
 
     $targets = if ($Service -eq "all") { @("forensic", "mobile-android", "mobile-ios", "vuln") } else { @($Service) }
     foreach ($name in $targets) {

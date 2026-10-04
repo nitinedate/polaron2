@@ -5,9 +5,11 @@ cd /d "%~dp0.."
 
 echo.
 echo  Building and starting Aetheris for the Nitin host.
-echo  https://122.179.140.167
-echo  https://future-softtech.co.in
+echo  Nginx is configured automatically for internet HTTPS:
+echo    https://122.179.140.167
+echo    https://future-softtech.co.in
 echo  SSL certificates are created when they are missing.
+echo  Ports 80 and 443 listen on this PC. Forward those ports from the router.
 echo  Add cache to rebuild images without the Docker layer cache.
 echo.
 

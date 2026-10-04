@@ -7,11 +7,11 @@
 #       Same start, but images are rebuilt with --no-cache.
 #
 #   start_docker_nitin.cmd [cache]
-#       Build, create SSL certificates, and publish
+#       Build, configure nginx, create SSL certificates, and publish
 #       https://122.179.140.167 and https://future-softtech.co.in
 #
 #   start_docker_prod.cmd [cache]
-#       Build, create the SSL certificate, and publish
+#       Build, configure nginx, create the SSL certificate, and publish
 #       https://122.179.141.248
 param(
     [Parameter(Mandatory = $true)]
@@ -109,6 +109,32 @@ function New-SslCertificate {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not create the HTTPS certificate for $CertName"
     }
+}
+
+function Ensure-PublicCertificateVolume {
+    foreach ($name in @("aetheris-gateway_certbot_etc", "aetheris-gateway_certbot_www")) {
+        & docker volume inspect $name 1>$null 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            & docker volume create $name | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Could not create Docker volume $name" }
+        }
+    }
+}
+
+function Test-PublicNginxConfig {
+    $httpsConf = (Join-Path $root "deployment\windows-ip-https\nginx.gateway.https.conf") -replace '\\', '/'
+    $locations = (Join-Path $root "deployment\windows-ip-https\gateway-https-locations.inc") -replace '\\', '/'
+    $proxy = (Join-Path $root "frontend\gateway-proxy.inc") -replace '\\', '/'
+    & docker run --rm `
+        -v "${httpsConf}:/etc/nginx/conf.d/default.conf:ro" `
+        -v "${locations}:/etc/nginx/conf.d/gateway-https-locations.inc:ro" `
+        -v "${proxy}:/etc/nginx/conf.d/gateway-proxy.inc:ro" `
+        -v "aetheris-gateway_certbot_etc:/etc/letsencrypt:ro" `
+        nginx:1.27-alpine nginx -t
+    if ($LASTEXITCODE -ne 0) {
+        throw "Nginx rejected the public HTTPS configuration."
+    }
+    Write-Host "Nginx configuration is valid."
 }
 
 function Ensure-SslCertificate {
@@ -328,13 +354,15 @@ $gatewayFiles = @(
 if ($public) {
     $gatewayFiles += @("-f", "deployment/windows-ip-https/docker-compose.gateway-public-https.yml")
     $hostIps = @(Get-HostIps -PublicIP $public.Ip)
-    Write-Step "HTTPS certificates"
+    Write-Step "Nginx and HTTPS certificates"
     Enable-PublicFirewall
+    Ensure-PublicCertificateVolume
     if ($public.Domain) {
         Ensure-SslCertificate -CertName $public.Domain -DnsNames @($public.Domain, "localhost") -Ips $hostIps
     }
     Ensure-SslCertificate -CertName $public.Ip -DnsNames @($public.Domain, "localhost") -Ips @($hostIps + @($public.Ip, "127.0.0.1"))
     Write-PublicNginxConfig -PublicIP $public.Ip -Domain $public.Domain
+    Test-PublicNginxConfig
 }
 
 Write-Step "Build gateway"
@@ -347,11 +375,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ($public) {
-    Write-Step "Publish HTTPS on ports 80 and 443"
+    Write-Step "Start nginx on ports 80 and 443 for internet HTTPS"
     Clear-OccupiedHostPorts -Docker (Get-Command docker).Source -ComposeArgs $gatewayFiles -Services @("gateway") -IncludeRunning
     Invoke-Docker -Title "gateway https" -DockerArgs ($gatewayFiles + @(
         "up", "-d", "--force-recreate", "--wait", "--wait-timeout", "180", "gateway"
     ))
+    & docker exec aetheris-gateway-gateway-1 nginx -t
+    if ($LASTEXITCODE -ne 0) {
+        throw "The running nginx gateway did not accept the HTTPS configuration."
+    }
 }
 
 Write-Step "Check that every stack is up"

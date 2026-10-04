@@ -6,15 +6,26 @@
 # Dynamic Windows drive mounts are a Compose OVERRIDE, not an `include`.
 # Windows startup/refresh scripts merge it with: -f docker-compose.drives.generated.yml
 
+# Job files, models, and object storage live under AETHERIS_BACKUP_DIR
+# (default ./backup). That folder is ordinary host storage, so it can be
+# moved to another disk: stop the stack, move the folder, update the env path.
 x-forensic-volumes: &forensic-volumes
   - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-  - ./data/job-data:/app/data
+  - type: bind
+    source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/job-data
+    target: /app/data
 
 # Shared GPU reservation (NVIDIA Container Toolkit / Docker Desktop GPU)
 x-gpu: &gpu
   driver: nvidia
   count: 1
   capabilities: [gpu]
+
+# Join the shared Postgres / Redis / MinIO / MailHog network.
+x-common-net: &common-net
+  networks:
+    - default
+    - aetheris-common
 
 # Probe host room (CPU/RAM/GPU/thermal) then exec celery — see scripts/dynamic_perf_entrypoint.py
 x-dynamic-entrypoint: &dynamic-entrypoint
@@ -25,7 +36,7 @@ x-worker-env: &worker-env
   DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
   REDIS_URL: redis://redis:6379/0
   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
-  RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://host.docker.internal:6389/0}
+  RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
   RESOURCE_GOVERNOR_GROUP: ${RESOURCE_GOVERNOR_GROUP:-aetheris-host}
   RESOURCE_GOVERNOR_FAIL_OPEN_ON_UNAVAILABLE: ${RESOURCE_GOVERNOR_FAIL_OPEN_ON_UNAVAILABLE:-true}
   RESOURCE_GOVERNOR_CPU_MAX_SLOTS: ${RESOURCE_GOVERNOR_CPU_MAX_SLOTS:-10}
@@ -46,6 +57,11 @@ x-worker-env: &worker-env
   # Examiner PC USB bridge for Device Wizard (adb / libimobiledevice on host)
   HOST_DRIVE_HELPER_URL: ${HOST_DRIVE_HELPER_URL:-http://host.docker.internal:9876}
   DATA_ROOT: /app/data
+  # Scratch files follow the job-data bind mount instead of the container layer
+  # inside DockerDesktopWSL.
+  TMPDIR: /app/data/tmp
+  TMP: /app/data/tmp
+  TEMP: /app/data/tmp
   # Disk/OCR/RAG workers hold DB sessions across long I/O — do not kill idle-in-tx.
   AETHERIS_WORKER: "1"
   IDLE_IN_TRANSACTION_SESSION_TIMEOUT: "0"
@@ -223,81 +239,14 @@ x-worker-env: &worker-env
   EDR_INVENTORY_ENABLED: ${EDR_INVENTORY_ENABLED:-true}
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: forensic
-      POSTGRES_PASSWORD: forensic
-      POSTGRES_DB: forensic
-    ports:
-      - "5434:5432"
-    shm_size: 1g
-    command:
-      - postgres
-      - -c
-      - shared_buffers=1GB
-      - -c
-      - max_connections=200
-      - -c
-      - work_mem=8MB
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forensic -d forensic && psql -U forensic -d forensic -c 'SELECT 1' >/dev/null"]
-      interval: 5s
-      timeout: 8s
-      retries: 20
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 6G
-
-  pgadmin:
-    image: dpage/pgadmin4:8
-    restart: on-failure
-    env_file:
-      - .env
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@forensic.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
-      PGADMIN_CONFIG_SERVER_MODE: "False"
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
-    ports:
-      - "${PGADMIN_PORT:-5052}:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
-      - ./docker/pgadmin/pgpass:/pgpass:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  mailhog:
-    image: mailhog/mailhog:v1.0.1
-    ports:
-      - "1025:1025"
-      - "8025:8025"
-
-  redis:
-    image: redis:7
-    ports:
-      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-
   ollama:
     image: ollama/ollama:latest
     ports:
       - "11434:11434"
     volumes:
-      - ollama_data:/root/.ollama
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/ollama
+        target: /root/.ollama
     environment:
       # Unload idle models so embedder can reclaim VRAM
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
@@ -420,27 +369,8 @@ services:
         limits:
           memory: 1536M
 
-  minio:
-    # Docker Hub minio/minio was discontinued (Oct 2025); Chainguard publishes a compatible image.
-    image: cgr.dev/chainguard/minio:latest
-    user: "0:0"
-    command: server /data --console-address ":9005"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
-    ports:
-      - "9004:9000"
-      - "9005:9005"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
   api:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -462,14 +392,6 @@ services:
     # GPU visible so /api/health/capacity and thermal probes see the host NVIDIA device
     gpus: all
     depends_on:
-      postgres:
-        condition: service_healthy
-      mailhog:
-        condition: service_started
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
       ollama:
         condition: service_healthy
       ollama-init:
@@ -483,7 +405,9 @@ services:
       - ./scripts:/scripts
       - ./migrations:/migrations
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data:/app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data
+        target: /app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
@@ -494,7 +418,7 @@ services:
         limits:
           memory: 4G
     command: >
-      sh -c "alembic upgrade head 2>/dev/null || true &&
+      sh -c "mkdir -p /app/data/tmp && alembic upgrade head 2>/dev/null || true &&
              python /scripts/ensure_sql_functions.py || true &&
              python /scripts/bootstrap_platform_admin.py || true &&
              uvicorn app.main:app --host 0.0.0.0 --port 8080"
@@ -513,6 +437,7 @@ services:
 
   # Disk extract/parse — forensic product only (vuln scans live in services/vuln).
   worker-disk:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -527,15 +452,13 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data/job-data:/app/data
-      - ./data/uploads:/app/data/uploads
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/job-data
+        target: /app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/uploads
+        target: /app/data/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
       api:
         condition: service_healthy
     deploy:
@@ -557,6 +480,7 @@ services:
 
   # Dedicated parse pool so parse bursts cannot occupy every disk-build process.
   worker-parse:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -570,14 +494,10 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data/job-data:/app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/job-data
+        target: /app/data
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
       api:
         condition: service_healthy
     deploy:
@@ -599,6 +519,7 @@ services:
 
   # GPU embeddings on rag-index. OCR runs on worker-ocr-gpu so both can overlap.
   worker-rag-gpu:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -634,15 +555,13 @@ services:
     volumes:
       - ./backend:/app
       - ./scripts:/scripts:ro
-      - ./data:/app/data
-      - huggingface_cache:/root/.cache/huggingface
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data
+        target: /app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/huggingface
+        target: /root/.cache/huggingface
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
       ollama:
         condition: service_healthy
       ollama-init:
@@ -668,6 +587,7 @@ services:
 
   # Dedicated OCR GPU worker — independent of RAG embeddings (two GPU slots).
   worker-ocr-gpu:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -703,13 +623,13 @@ services:
     volumes:
       - ./backend:/app
       - ./scripts:/scripts:ro
-      - ./data:/app/data
-      - huggingface_cache:/root/.cache/huggingface
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data
+        target: /app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/huggingface
+        target: /root/.cache/huggingface
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       api:
         condition: service_healthy
     entrypoint: *dynamic-entrypoint
@@ -726,6 +646,7 @@ services:
       - ocr
 
   worker-report:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -739,12 +660,10 @@ services:
     volumes:
       - ./backend:/app
       - ./scripts:/scripts:ro
-      - ./data:/app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data
+        target: /app/data
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       ollama:
         condition: service_healthy
       ollama-init:
@@ -768,6 +687,7 @@ services:
 
   # Forensic Agentic AI — isolated from disk-build / rag-index
   worker-agent:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -782,12 +702,10 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
-      - ./data:/app/data
+      - type: bind
+        source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data
+        target: /app/data
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       ollama:
         condition: service_healthy
       ollama-init:
@@ -814,6 +732,7 @@ services:
       - agent-orchestration
 
   worker-beat:
+    <<: *common-net
     image: rag_new2-api
     build:
       context: ./backend
@@ -828,10 +747,6 @@ services:
       - ./backend:/app
       - ./scripts:/scripts:ro
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       api:
         condition: service_healthy
     entrypoint: *dynamic-entrypoint
@@ -861,10 +776,10 @@ services:
         condition: service_healthy
 
 volumes:
-  pgdata:
-  pgadmin_data:
-  minio_data:
-  ollama_data:
   neo4j_data:
   opensearch_data:
-  huggingface_cache:
+
+networks:
+  aetheris-common:
+    external: true
+    name: aetheris-common
