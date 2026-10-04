@@ -1,19 +1,65 @@
-# V45.3 - Docker Desktop (WSL2) recovery for stuck containers.
+# V45.3b - Docker Desktop (WSL2) recovery for stuck containers.
 #
 # Symptom (production, during `docker compose up -d` recreate):
 #   Error response from daemon: cannot stop container: <id>: tried to kill container,
 #   but did not receive an exit event
 #
-# Meaning: SIGKILL was delivered but a process in the container is in an
-# uninterruptible kernel state (blocked on the Windows bind-mount file-sharing
-# layer or inside an NVIDIA/CUDA call). No docker command can end it; only the
-# docker-desktop VM restart can. This module:
-#   1. stops workers with the configured grace period BEFORE recreate (so Celery
-#      cold-shutdown can release GPU/locks and exit on its own);
+# A process in the container is in an uninterruptible kernel state (Windows
+# bind-mount file-sharing layer or an NVIDIA/CUDA call). No docker command can
+# end it; only a docker-desktop VM restart can. This module:
+#   1. stops workers with the configured grace period BEFORE recreate;
 #   2. on the daemon error, tries `docker rm -f`; if that fails,
-#   3. restarts the Docker Desktop engine (`wsl --shutdown` + relaunch) and waits
-#      for `docker info` - gated by -AutoRecoverEngine so an operator can opt out.
+#   3. restarts the Docker Desktop engine (wsl --shutdown + relaunch) and waits
+#      for `docker info` - gated by -AutoRecoverEngine.
+#
+# Windows PowerShell 5.1 rule (the V45.3a regression): when
+# $ErrorActionPreference = "Stop" is in effect, redirecting a native command's
+# stderr with 2>&1 turns EVERY stderr line into a terminating NativeCommandError.
+# Docker Compose prints its progress ("Container x Running") on stderr, so the
+# wrapper threw on the first healthy line. ALL native invocations in this file go
+# through Invoke-NativeCapture, which lowers the preference to Continue for the
+# duration of the call and converts ErrorRecords back into plain text.
 # Dot-source from start-stack.ps1.
+
+function Invoke-NativeCapture {
+    <#
+      Runs a native executable, merging stdout+stderr into plain text lines,
+      without letting $ErrorActionPreference = "Stop" terminate on stderr.
+      Returns @{ Lines = [string[]]; ExitCode = [int]; Text = [string] }.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [string[]]$Arguments = @()
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $raw = @()
+    $code = 0
+    try {
+        $raw = @(& $Exe @Arguments 2>&1)
+        $code = $LASTEXITCODE
+    }
+    catch {
+        # Defensive: a host that still converts stderr into a terminating error.
+        $raw += $_.Exception.Message
+        $code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+    $lines = @()
+    foreach ($item in $raw) {
+        if ($null -eq $item) { continue }
+        if ($item -is [System.Management.Automation.ErrorRecord]) {
+            $lines += [string]$item.Exception.Message
+        }
+        else {
+            $lines += [string]$item
+        }
+    }
+    if ($null -eq $code) { $code = 0 }
+    return @{ Lines = $lines; ExitCode = [int]$code; Text = ($lines -join "`n") }
+}
 
 function Test-StuckContainerError {
     param([string]$Text)
@@ -42,10 +88,10 @@ function Stop-AetherisWorkers {
     )
     if (-not $Services.Count) { return $true }
     Write-Host "Stopping [$($Services -join ', ')] with ${GraceSec}s grace (Celery cold shutdown)..."
-    $out = & $Docker @ComposeArgs stop -t $GraceSec @Services 2>&1
-    $out | ForEach-Object { Write-Host "  $_" }
-    if ($LASTEXITCODE -eq 0) { return $true }
-    return -not (Test-StuckContainerError ($out | Out-String))
+    $r = Invoke-NativeCapture -Exe $Docker -Arguments ($ComposeArgs + @("stop", "-t", "$GraceSec") + $Services)
+    foreach ($line in $r.Lines) { Write-Host "  $line" }
+    if ($r.ExitCode -eq 0) { return $true }
+    return -not (Test-StuckContainerError $r.Text)
 }
 
 function Remove-StuckContainers {
@@ -53,9 +99,9 @@ function Remove-StuckContainers {
     $ok = $true
     foreach ($id in $Ids) {
         Write-Host "Force-removing stuck container $id ..." -ForegroundColor Yellow
-        $out = & $Docker rm -f $id 2>&1
-        $out | ForEach-Object { Write-Host "  $_" }
-        if ($LASTEXITCODE -ne 0 -and (Test-StuckContainerError ($out | Out-String))) { $ok = $false }
+        $r = Invoke-NativeCapture -Exe $Docker -Arguments @("rm", "-f", $id)
+        foreach ($line in $r.Lines) { Write-Host "  $line" }
+        if ($r.ExitCode -ne 0 -and (Test-StuckContainerError $r.Text)) { $ok = $false }
     }
     return $ok
 }
@@ -64,8 +110,8 @@ function Wait-DockerEngine {
     param([string]$Docker, [int]$TimeoutSec = 420)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
-        & $Docker info 1>$null 2>$null
-        if ($LASTEXITCODE -eq 0) { return $true }
+        $r = Invoke-NativeCapture -Exe $Docker -Arguments @("info")
+        if ($r.ExitCode -eq 0) { return $true }
         Start-Sleep -Seconds 5
     }
     return $false
@@ -75,15 +121,17 @@ function Restart-DockerDesktopEngine {
     param([string]$Docker)
     Write-Host ""
     Write-Host "Restarting the Docker Desktop engine to clear an unkillable container (docker-desktop VM restart)..." -ForegroundColor Yellow
-    $exe = @(
-        "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
-        "$env:LOCALAPPDATA\Programs\Docker\Docker\Docker Desktop.exe"
-    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $candidates = @()
+    if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe") }
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\Docker Desktop.exe") }
+    $exe = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 
-    try { Get-Process "Docker Desktop" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
-    try { Get-Process "com.docker.backend" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+    foreach ($name in @("Docker Desktop", "com.docker.backend")) {
+        try { Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+    }
     Start-Sleep -Seconds 3
-    try { & wsl --shutdown 2>&1 | ForEach-Object { Write-Host "  wsl: $_" } } catch {}
+    $wsl = Invoke-NativeCapture -Exe "wsl" -Arguments @("--shutdown")
+    foreach ($line in $wsl.Lines) { if ($line) { Write-Host "  wsl: $line" } }
     Start-Sleep -Seconds 5
     if (-not $exe) {
         Write-Host "Docker Desktop.exe not found - start Docker Desktop manually, then re-run." -ForegroundColor Red
@@ -101,8 +149,8 @@ function Restart-DockerDesktopEngine {
 
 function Invoke-ComposeWithRecovery {
     <#
-      Runs `docker compose <args>`; on the stuck-container daemon error, performs
-      rm -f -> engine restart (if $AutoRecoverEngine) -> one retry.
+      Runs `docker <ComposeArgs> <ComposeCommand>`; on the stuck-container daemon
+      error, performs rm -f -> engine restart (if -AutoRecoverEngine) -> one retry.
       Returns $true on success.
     #>
     param(
@@ -111,15 +159,14 @@ function Invoke-ComposeWithRecovery {
         [string[]]$ComposeCommand,
         [switch]$AutoRecoverEngine
     )
-    $out = & $Docker @ComposeArgs @ComposeCommand 2>&1
-    $out | ForEach-Object { Write-Host $_ }
-    if ($LASTEXITCODE -eq 0) { return $true }
-    $text = ($out | Out-String)
-    if (-not (Test-StuckContainerError $text)) { return $false }
+    $r = Invoke-NativeCapture -Exe $Docker -Arguments ($ComposeArgs + $ComposeCommand)
+    foreach ($line in $r.Lines) { Write-Host $line }
+    if ($r.ExitCode -eq 0) { return $true }
+    if (-not (Test-StuckContainerError $r.Text)) { return $false }
 
     Write-Host ""
     Write-Host "Docker could not stop a container (process in uninterruptible I/O or CUDA call)." -ForegroundColor Yellow
-    $ids = Get-StuckContainerIds $text
+    $ids = Get-StuckContainerIds $r.Text
     if ($ids.Count -and (Remove-StuckContainers -Docker $Docker -Ids $ids)) {
         Write-Host "Stuck container removed; retrying compose..."
     }
@@ -130,7 +177,7 @@ function Invoke-ComposeWithRecovery {
         Write-Host "Run again with -AutoRecoverEngine (or restart Docker Desktop manually: wsl --shutdown) and retry." -ForegroundColor Red
         return $false
     }
-    $out = & $Docker @ComposeArgs @ComposeCommand 2>&1
-    $out | ForEach-Object { Write-Host $_ }
-    return ($LASTEXITCODE -eq 0)
+    $r = Invoke-NativeCapture -Exe $Docker -Arguments ($ComposeArgs + $ComposeCommand)
+    foreach ($line in $r.Lines) { Write-Host $line }
+    return ($r.ExitCode -eq 0)
 }

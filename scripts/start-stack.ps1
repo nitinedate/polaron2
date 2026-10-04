@@ -180,7 +180,7 @@ function Start-AetherisService {
                     throw "docker wait failed for one-shot container $id"
                 }
                 if ([int]$code -ne 0) {
-                    & $Docker logs --tail 40 $id 2>&1 | Write-Host
+                    (Invoke-NativeCapture -Exe $Docker -Arguments @("logs", "--tail", "40", $id)).Lines | ForEach-Object { Write-Host $_ }
                     throw "one-shot container $id exited with code $code"
                 }
             }
@@ -217,7 +217,7 @@ function Start-AetherisService {
         if (-not $waveOk) {
             if ($durable -contains "gvmd") {
                 Write-Host "Greenbone did not become healthy. Recent gvmd and pg-gvm logs:" -ForegroundColor Yellow
-                & $Docker @composeArgs logs --tail 40 gvmd pg-gvm 2>&1 | Write-Host
+                (Invoke-NativeCapture -Exe $Docker -Arguments ($composeArgs + @("logs", "--tail", "40", "gvmd", "pg-gvm"))).Lines | ForEach-Object { Write-Host $_ }
             }
             throw "docker compose failed for $Name wave [$($durable -join ', ')] (exit $LASTEXITCODE)"
         }

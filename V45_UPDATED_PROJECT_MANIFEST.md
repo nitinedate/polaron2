@@ -75,3 +75,15 @@ healthy worker waiting for the CPU lane, opening the E01, enumerating or plannin
 | `backend/app/services/pipeline_supervisor.py` | `heartbeat_stale` cleared when the lease is fresh |
 | `backend/app/routers/jobs.py` | job rows carry `worker_liveness`; `/resume` on a live job refreshes `updated_at` and explains instead of re-queueing |
 | `frontend/src/...` | auto-resume and the stale banner skip jobs whose `worker_liveness.alive` is true (tsc clean) |
+
+## V45.3b - NativeCommandError on "Container ... Running" (Windows PowerShell 5.1)
+`start-stack.ps1` runs with `$ErrorActionPreference = "Stop"`. Under Windows PowerShell 5.1, redirecting a native
+command's stderr (`2>&1`) converts every stderr line into a terminating NativeCommandError, and Docker Compose
+prints its progress on stderr - so the V45.3 recovery wrapper threw on the first healthy line. (PowerShell 7
+dropped that behaviour, which is why it passed in testing.)
+| File | Change |
+|---|---|
+| `scripts/docker-engine-recovery.ps1` | every native call goes through `Invoke-NativeCapture` (lowers the preference to Continue for the call, converts ErrorRecords to text, returns exit code); verified under `EAP=Stop` with stderr-only Compose output, both recovery branches |
+| `scripts/start-stack.ps1` | the two pre-existing `docker logs ... 2>&1` dumps in error paths use the helper too |
+| `scripts/stage-evidence.ps1` | shell script is written to a temp file and bind-mounted instead of passed as a quoted argument (5.1 mangles embedded quotes); `.evidence-staging` marker so `/host/z` is never an empty stub |
+| `diagnostics/lint_ps1_native_stderr.py` | NEW - fails on `2>&1` under Stop without a preference guard, and on non-ASCII in code lines; run on any .ps1 change |

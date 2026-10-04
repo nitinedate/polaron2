@@ -44,11 +44,12 @@ $items = Get-ChildItem -LiteralPath $src -File
 $bytes = ($items | Measure-Object -Property Length -Sum).Sum
 Write-Host ("Staging {0} file(s), {1:N1} GB from '{2}' -> volume {3} as '{4}'" -f $items.Count, ($bytes / 1GB), $src, $volume, $case)
 
-# One sequential stream per file; cp -r keeps mtimes. Progress via pv-less dd-free loop.
-$script = @"
+# One sequential stream per file; cp -p keeps mtimes. The shell script is written
+# to a temp file and bind-mounted (never passed as a quoted argument - Windows
+# PowerShell 5.1 mangles embedded double quotes in native-command arguments).
+$shell = @"
 set -e
-mkdir -p '/dst/$case'
-total=0
+mkdir -p "/dst/$case"
 for f in /src/*; do
   n=`$(basename "`$f")
   if [ -f "/dst/$case/`$n" ] && [ "`$(stat -c %s "`$f")" = "`$(stat -c %s "/dst/$case/`$n")" ]; then
@@ -59,10 +60,23 @@ for f in /src/*; do
   sz=`$(stat -c %s "/dst/$case/`$n"); end=`$(date +%s); d=`$((end-start)); [ "`$d" -gt 0 ] || d=1
   echo "copied `$n `$((sz/1048576)) MiB in `${d}s (`$((sz/1048576/d)) MiB/s)"
 done
+touch /dst/.evidence-staging
 df -h /dst | tail -1
 "@
-docker run --rm -v "${volume}:/dst" -v "${src}:/src:ro" alpine:3.20 sh -c $script
-if ($LASTEXITCODE -ne 0) { throw "staging copy failed (exit $LASTEXITCODE)" }
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aetheris-stage-" + [guid]::NewGuid().ToString("N") + ".sh")
+# LF line endings and no BOM - this file is executed by /bin/sh inside the container.
+[System.IO.File]::WriteAllText($tmp, ($shell -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))
+try {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & docker run --rm -v "${volume}:/dst" -v "${src}:/src:ro" -v "${tmp}:/stage.sh:ro" alpine:3.20 sh /stage.sh
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+}
+finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+}
+if ($code -ne 0) { throw "staging copy failed (exit $code)" }
 
 if ($Verify) {
     Write-Host "Verifying SHA-256 (source vs staged)..."
