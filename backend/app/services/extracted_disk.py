@@ -816,7 +816,7 @@ def _shard_worker(
         cpu_backoff_delay = None
     thermal_check_every = 64
     try:
-        cctx = zstd.ZstdCompressor(level=max(int(zstd_level), 1), threads=0)
+        cctx = zstd.ZstdCompressor(level=max(int(zstd_level), 1), threads=2)
         with tmp_path.open("wb") as raw_out:
             with cctx.stream_writer(raw_out) as compressed:
                 with tarfile.open(fileobj=compressed, mode="w|", bufsize=tar_bufsize) as tar:

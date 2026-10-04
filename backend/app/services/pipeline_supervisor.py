@@ -1210,7 +1210,16 @@ def dispatch_stage_agent(db, job_id: str, *, schema_name: str, recommendation: d
 
         workers = dispatch_ocr_agent(schema_name, job_id)
         lane = "GPU" if ocr_should_use_gpu() else "GPU-queue"
-        msg = f"[Supervisor] ocr_agent — resume {lane} OCR ({workers} worker(s); {reason})"
+        try:
+            from app.services.ocr_gpu import _glm_micro_batch_size
+
+            micro = _glm_micro_batch_size()
+        except Exception:
+            micro = 1
+        msg = (
+            f"[Supervisor] ocr_agent — resume {lane} OCR "
+            f"({workers} CUDA worker, {micro}-page batches; {reason})"
+        )
     elif agent_id == "rag_agent" or stage_key == "rag_agent":
         if action == "force_finish_rag":
             from app.services.dual_rag_index import force_finish_rag_enrichment

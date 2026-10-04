@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import multiprocessing
+import os
 import threading
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 
@@ -489,6 +490,122 @@ def _get_glm_ocr():
         return None, None, None
 
 
+def _glm_micro_batch_size() -> int:
+    """How many page images share one GLM forward pass. Same model and token cap."""
+    try:
+        raw = int(os.environ.get("OCR_GLM_MICRO_BATCH") or 4)
+    except (TypeError, ValueError):
+        raw = 4
+    return max(1, min(raw, 8))
+
+
+def _decode_glm_output(processor, output_row, prompt: str) -> tuple[str, float]:
+    text = processor.decode(output_row, skip_special_tokens=True).strip()
+    if prompt and text.startswith(prompt):
+        text = text[len(prompt) :].strip()
+    conf = 0.92 if len(text) > 20 else (0.75 if text else 0.0)
+    return text, conf
+
+
+def _glm_generate(model, inputs, *, max_tokens: int, infer_sec: int, batch_n: int):
+    import torch
+
+    box: dict = {}
+
+    def _generate() -> None:
+        with torch.no_grad():
+            box["output"] = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
+
+    worker = threading.Thread(target=_generate, name="glm-ocr-infer", daemon=True)
+    worker.start()
+    # One timeout budget per page so a batch is not cut shorter than serial runs.
+    worker.join(infer_sec * max(batch_n, 1))
+    if worker.is_alive():
+        log.warning("GLM-OCR infer timed out after %ss — skipping this batch", infer_sec * batch_n)
+        raise GlmOcrTimeout(f"infer exceeded {infer_sec * batch_n}s")
+    if "output" not in box:
+        raise RuntimeError("GLM-OCR returned no output")
+    return box["output"]
+
+
+def _glm_ocr_images(images: list, *, prompt: str) -> list[tuple[str, float]]:
+    """OCR several pages in one CUDA forward pass. Falls back to one page at a time."""
+    if not images:
+        return []
+    if len(images) == 1:
+        return [_glm_ocr_image(images[0], prompt=prompt)]
+    model, processor, device = _get_glm_ocr()
+    if model is None or processor is None:
+        return [("", 0.0) for _ in images]
+    from app.services.gpu_thermal import thermal_guard_before_batch
+
+    thermal_guard_before_batch(reason="glm_ocr")
+    try:
+        import torch
+
+        conversations = [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": img},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            for img in images
+        ]
+        inputs = processor.apply_chat_template(
+            conversations,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+            padding=True,
+        )
+        target = model.device if hasattr(model, "device") else device
+        inputs = {k: v.to(target) if hasattr(v, "to") else v for k, v in inputs.items()}
+        settings = get_settings()
+        max_tokens = int(getattr(settings, "ocr_max_new_tokens", 512) or 512)
+        max_tokens = max(128, min(max_tokens, 1024))
+        infer_sec = int(getattr(settings, "ocr_max_infer_sec", 90) or 90)
+        infer_sec = max(20, min(infer_sec, 180))
+        output = _glm_generate(
+            model, inputs, max_tokens=max_tokens, infer_sec=infer_sec, batch_n=len(images)
+        )
+        decoded: list[tuple[str, float]] = []
+        rows = output if hasattr(output, "__len__") else [output]
+        if len(rows) < len(images):
+            raise RuntimeError(f"GLM batch returned {len(rows)} rows for {len(images)} images")
+        for row in rows[: len(images)]:
+            decoded.append(_decode_glm_output(processor, row, prompt))
+        return decoded
+    except GlmOcrTimeout:
+        raise
+    except Exception as exc:
+        log.warning("GLM-OCR batch of %s failed (%s) — running pages one at a time", len(images), exc)
+        out: list[tuple[str, float]] = []
+        for img in images:
+            try:
+                out.append(_glm_ocr_image(img, prompt=prompt))
+            except GlmOcrTimeout:
+                raise
+            except Exception:
+                out.append(("", 0.0))
+        return out
+    finally:
+        try:
+            from app.services.gpu_thermal import should_empty_cuda_cache
+
+            if should_empty_cuda_cache(batch_num=8):
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
 def _glm_ocr_image(img, *, prompt: str) -> tuple[str, float]:
     model, processor, device = _get_glm_ocr()
     if model is None or processor is None:
@@ -497,8 +614,6 @@ def _glm_ocr_image(img, *, prompt: str) -> tuple[str, float]:
 
     thermal_guard_before_batch(reason="glm_ocr")
     try:
-        import torch
-
         messages = [
             {
                 "role": "user",
@@ -522,26 +637,8 @@ def _glm_ocr_image(img, *, prompt: str) -> tuple[str, float]:
         max_tokens = max(128, min(max_tokens, 1024))
         infer_sec = int(getattr(settings, "ocr_max_infer_sec", 90) or 90)
         infer_sec = max(20, min(infer_sec, 180))
-        box: dict = {}
-
-        def _generate() -> None:
-            with torch.no_grad():
-                box["output"] = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
-
-        worker = threading.Thread(target=_generate, name="glm-ocr-infer", daemon=True)
-        worker.start()
-        worker.join(infer_sec)
-        if worker.is_alive():
-            log.warning("GLM-OCR infer timed out after %ss — skipping this document", infer_sec)
-            raise GlmOcrTimeout(f"infer exceeded {infer_sec}s")
-        if "output" not in box:
-            return "", 0.0
-        output = box["output"]
-        text = processor.decode(output[0], skip_special_tokens=True).strip()
-        if prompt and text.startswith(prompt):
-            text = text[len(prompt) :].strip()
-        conf = 0.92 if len(text) > 20 else (0.75 if text else 0.0)
-        return text, conf
+        output = _glm_generate(model, inputs, max_tokens=max_tokens, infer_sec=infer_sec, batch_n=1)
+        return _decode_glm_output(processor, output[0], prompt)
     except GlmOcrTimeout:
         raise
     except Exception as exc:
@@ -771,23 +868,32 @@ def _gpu_ocr_prepared(prep: dict) -> tuple[str, float, str]:
     texts: list[str] = []
     confs: list[float] = []
     timed_out = False
+    image_segs: list[dict] = []
     for seg in prep.get("segments") or []:
         if seg.get("type") == "text" and seg.get("text"):
             texts.append(str(seg["text"]))
             confs.append(0.90)
             continue
-        img = seg.get("image")
-        if img is None:
-            continue
+        if seg.get("image") is not None:
+            image_segs.append(seg)
+    micro = _glm_micro_batch_size()
+    idx = 0
+    while idx < len(image_segs):
+        chunk = image_segs[idx : idx + micro]
+        idx += len(chunk)
+        prompt = str(chunk[0].get("prompt") or "Text Recognition:")
+        if any(str(seg.get("prompt") or "Text Recognition:") != prompt for seg in chunk):
+            prompt = "Text Recognition:"
         try:
-            text, conf = _glm_ocr_image(img, prompt=str(seg.get("prompt") or "Text Recognition:"))
+            decoded = _glm_ocr_images([seg.get("image") for seg in chunk], prompt=prompt)
         except GlmOcrTimeout:
             timed_out = True
             log.warning("GLM-OCR abandoned remaining pages for %s after infer timeout", prep.get("path"))
             break
-        if text:
-            texts.append(text)
-            confs.append(conf)
+        for text, conf in decoded:
+            if text:
+                texts.append(text)
+                confs.append(conf)
     if not texts:
         return "", 0.0, "timeout" if timed_out else "stub"
     return "\n\n".join(texts), (sum(confs) / len(confs) if confs else 0.0), "glm-ocr"
@@ -1602,37 +1708,80 @@ def run_ocr_for_job(
             )
             db.commit()
             glm_ran = True
-            for payload in needs_gpu_rows:
-                row = (payload.get("row") or {}) if isinstance(payload, dict) else {}
-                path = str(payload.get("path") or row.get("file_path") or "")
-                data = payload.get("data")
-                if data is None:
-                    try:
-                        data = read_file_fn(path)
-                    except Exception:
-                        data = None
-                try:
-                    text, conf, engine = ocr_bytes(
+            micro = _glm_micro_batch_size()
+            write_disk_log(
+                db,
+                job_id,
+                f"OCR agent — CUDA GLM micro-batch {micro} (same model, token cap, and page size)",
+                stage="ocr",
+            )
+            db.commit()
+            for start in range(0, len(needs_gpu_rows), micro):
+                chunk = needs_gpu_rows[start : start + micro]
+                prepared: list[tuple[dict, dict]] = []
+                for payload in chunk:
+                    row = (payload.get("row") or {}) if isinstance(payload, dict) else {}
+                    path = str(payload.get("path") or row.get("file_path") or "")
+                    data = payload.get("data")
+                    if data is None:
+                        try:
+                            data = read_file_fn(path)
+                        except Exception:
+                            data = None
+                    prep = cpu_prepare_ocr_item(
                         data or b"",
                         path=path,
                         max_pages=ocr_page_budget,
+                        allow_photos=forensic_photos_allowed(),
                     )
-                except Exception as exc:
-                    log.warning("GPU OCR failed for %s: %s", path, exc)
-                    _mark_ocr_skip(row, engine="glm_fail")
-                    db.commit()
+                    prepared.append((payload, prep))
+                image_jobs: list[tuple[int, object, str]] = []
+                piece_lists: list[list[str]] = [[] for _ in prepared]
+                conf_lists: list[list[float]] = [[] for _ in prepared]
+                for prep_i, (_payload, prep) in enumerate(prepared):
+                    if prep.get("status") == "cpu_done" and prep.get("text"):
+                        piece_lists[prep_i].append(str(prep.get("text") or ""))
+                        conf_lists[prep_i].append(float(prep.get("conf") or 0.9))
+                        continue
+                    for seg in prep.get("segments") or []:
+                        if seg.get("type") == "text" and seg.get("text"):
+                            piece_lists[prep_i].append(str(seg["text"]))
+                            conf_lists[prep_i].append(0.90)
+                            continue
+                        img = seg.get("image")
+                        if img is None:
+                            continue
+                        image_jobs.append((prep_i, img, str(seg.get("prompt") or "Text Recognition:")))
+                grouped: dict[str, list[tuple[int, object]]] = {}
+                for prep_i, img, prompt in image_jobs:
+                    grouped.setdefault(prompt, []).append((prep_i, img))
+                for prompt, jobs in grouped.items():
+                    try:
+                        decoded = _glm_ocr_images([img for _i, img in jobs], prompt=prompt)
+                    except Exception as exc:
+                        log.warning("GLM micro-batch failed: %s", exc)
+                        decoded = [("", 0.0) for _ in jobs]
+                    for (prep_i, _img), (text, conf) in zip(jobs, decoded):
+                        if text:
+                            piece_lists[prep_i].append(text)
+                            conf_lists[prep_i].append(conf)
+                for (payload, prep), pieces, confs in zip(prepared, piece_lists, conf_lists):
+                    row = (payload.get("row") or {}) if isinstance(payload, dict) else {}
+                    path = str(payload.get("path") or row.get("file_path") or "")
+                    if pieces:
+                        text = "\n\n".join(pieces)
+                        conf = sum(confs) / len(confs) if confs else 0.0
+                        _persist_ocr_ok(row, text, conf, "glm-ocr" if prep.get("status") != "cpu_done" else str(prep.get("engine") or "pypdf"))
+                        db.commit()
+                        done += 1
+                    elif prep.get("status") == "skip":
+                        _mark_ocr_skip(row, engine=str(prep.get("engine") or "na"))
+                        db.commit()
+                    else:
+                        _mark_ocr_skip(row, engine="glm_empty")
+                        db.commit()
                     write_ocr_live_progress(db, job_id)
                     db.commit()
-                    continue
-                if text:
-                    _persist_ocr_ok(row, text, conf, engine)
-                    db.commit()
-                    done += 1
-                else:
-                    _mark_ocr_skip(row, engine=engine or "glm_empty")
-                    db.commit()
-                write_ocr_live_progress(db, job_id)
-                db.commit()
         gpu_deferred = bool(needs_gpu_rows) and not glm_ran
     elif needs_gpu_rows and not gpu:
         defer_msg, handed_off = handoff_glm_scans_to_cuda_worker(

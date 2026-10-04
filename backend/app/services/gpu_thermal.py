@@ -257,7 +257,8 @@ def _clamp_laptop_ceilings(settings: ThermalSettings, gpu_name: str | None) -> T
             duty_batches=settings.duty_batches,
             duty_rest_sec=settings.duty_rest_sec,
             adaptive_batch=settings.adaptive_batch,
-            power_limit_w=min(int(settings.power_limit_w or 70), 90) if settings.power_limit_w else settings.power_limit_w,
+            # Cool-path ceiling. 5070 Ti Laptop is starved at 70–90W; abort/pause still apply.
+            power_limit_w=min(int(settings.power_limit_w or 120), 140) if settings.power_limit_w else settings.power_limit_w,
             start_max_c=min(settings.start_max_c, 92),
             cool_boost_c=settings.cool_boost_c,
             cool_batch_multiplier=settings.cool_batch_multiplier,
