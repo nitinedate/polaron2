@@ -5,11 +5,13 @@ param(
     [switch]$NoScanners,
     [switch]$IncludeGvm,
     [switch]$IncludeWazuh,
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$SkipGateway
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+. (Join-Path $root "scripts\free-published-ports.ps1")
 
 function Get-Docker {
     $docker = Get-Command docker -ErrorAction SilentlyContinue
@@ -279,25 +281,31 @@ try {
         Start-AetherisService -Name $name -Docker $docker
     }
 
-    Write-Host "Starting API gateway (single UI)..."
-    # Ignore missing legacy per-product frontend containers (rm -f still writes stderr).
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = "SilentlyContinue"
-    foreach ($oldUi in @("aetheris-forensic-frontend-1", "aetheris-mobile-extract-frontend-1", "aetheris-vuln-frontend-1")) {
-        & $docker rm -f $oldUi 2>&1 | Out-Null
+    if ($SkipGateway) {
+        Write-Host "Skipping the port 3000 gateway. Public HTTPS will publish 80, 443, and 127.0.0.1:3001."
+    } else {
+        Write-Host "Starting API gateway (single UI)..."
+        # Ignore missing legacy per-product frontend containers (rm -f still writes stderr).
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        foreach ($oldUi in @("aetheris-forensic-frontend-1", "aetheris-mobile-extract-frontend-1", "aetheris-vuln-frontend-1")) {
+            & $docker rm -f $oldUi 2>&1 | Out-Null
+        }
+        $ErrorActionPreference = $prevEap
+        $gwCompose = @(
+            "compose", "--project-directory", $root, "--project-name", "aetheris-gateway",
+            "-f", "services/gateway/docker-compose.yml"
+        )
+        Clear-OccupiedHostPorts -Docker $docker -ComposeArgs $gwCompose -Services @("gateway") -IncludeRunning
+        $gwArgs = $gwCompose + @("up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "180")
+        if (-not $NoBuild) { $gwArgs += "--build" }
+        & $docker @gwArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "docker compose failed for gateway (exit $LASTEXITCODE)"
+        }
+        Write-Host "Disk/Vulnerability gateway UI: http://localhost:3001"
+        Write-Host "Gateway alias:              http://localhost:3000"
     }
-    $ErrorActionPreference = $prevEap
-    $gwArgs = @(
-        "compose", "--project-directory", $root, "--project-name", "aetheris-gateway",
-        "-f", "services/gateway/docker-compose.yml", "up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "180"
-    )
-    if (-not $NoBuild) { $gwArgs += "--build" }
-    & $docker @gwArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "docker compose failed for gateway (exit $LASTEXITCODE)"
-    }
-    Write-Host "Disk/Vulnerability gateway UI: http://localhost:3001"
-    Write-Host "Gateway alias:              http://localhost:3000"
     if ($targets -contains "mobile-android") { Write-Host "Android compact UI:         http://localhost:3002" }
     if ($targets -contains "mobile-ios") { Write-Host "iOS compact UI:             http://localhost:3004" }
 

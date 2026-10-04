@@ -369,7 +369,16 @@ Write-Step "Build gateway"
 Invoke-Docker -Title "gateway" -DockerArgs ($gatewayFiles + @("build") + $buildFlag + @("gateway"))
 
 Write-Step "Start forensic, Android, iOS, vulnerability, and gateway"
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "scripts\start-stack.ps1") -Service all -NoBuild
+$stackArgs = @(
+    "-NoProfile", "-ExecutionPolicy", "Bypass",
+    "-File", (Join-Path $root "scripts\start-stack.ps1"),
+    "-Service", "all", "-NoBuild"
+)
+# Production and the public host publish 80/443. Do not also bind 0.0.0.0:3000
+# here — that port is already taken on the production machine, and the HTTPS
+# gateway started below does not use it.
+if ($public) { $stackArgs += "-SkipGateway" }
+& powershell @stackArgs
 if ($LASTEXITCODE -ne 0) {
     throw "start-stack failed (exit $LASTEXITCODE)"
 }
