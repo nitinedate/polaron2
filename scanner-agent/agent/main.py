@@ -252,6 +252,8 @@ def _result_payload(
         "report_result_count": int(evidence.get("report_result_count") or 0),
         "plugin_error_count": int(evidence.get("plugin_error_count") or 0),
         "plugin_error_details": evidence.get("plugin_error_details") or [],
+        "host_coverage": evidence.get("host_coverage") or {},
+        "degraded_hosts": evidence.get("degraded_hosts") or [],
         "scan_start": evidence.get("scan_start"),
         "scan_end": evidence.get("scan_end"),
         "assessment_complete": bool(evidence.get("assessment_complete")),
@@ -305,6 +307,7 @@ def _merge_chunk_details(
     seen_report_ids: set[str] = set()
     assessed: set[str] = set()
     plugin_errors: list[Any] = []
+    host_coverage: dict[str, dict[str, Any]] = {}
     report_ids: list[str] = []
     gmp_statuses: list[str] = []
     statuses: list[str] = []
@@ -356,6 +359,9 @@ def _merge_chunk_details(
             assessed.add(str(h).strip())
         result_count += int(ev.get("report_result_count") or 0)
         plugin_errors.extend(ev.get("plugin_error_details") or [])
+        for cov_host, cov in (ev.get("host_coverage") or {}).items():
+            if isinstance(cov, dict):
+                host_coverage[str(cov_host)] = cov
         if ev.get("report_id"):
             report_ids.append(str(ev["report_id"]))
         raw_task = str(ev.get("task_status") or details.get("gmp_status") or "").strip().lower()
@@ -464,6 +470,10 @@ def _merge_chunk_details(
             "report_result_count": result_count,
             "plugin_error_count": len(plugin_errors),
             "plugin_error_details": plugin_errors[:50],
+            "host_coverage": host_coverage,
+            "degraded_hosts": sorted(
+                h for h, c in host_coverage.items() if str((c or {}).get("verdict") or "").startswith("degraded")
+            ),
             "scan_start": min(scan_starts) if scan_starts else (now_iso if assessment_complete and skipped else None),
             "scan_end": max(scan_ends) if scan_ends else (now_iso if assessment_complete and skipped else None),
             "assessment_complete": assessment_complete,
@@ -714,6 +724,10 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
     task_ids: list[str | None] = [None] * len(chunks)
     done_details: dict[int, dict[str, Any]] = {}
     pending: list[int] = list(range(len(chunks)))
+    # V45.4: one automatic re-run per chunk when the report proves the port
+    # scanner never finished (truncated scan reported as Done).
+    degraded_retries: dict[int, int] = {}
+    degraded_retry_budget = max(0, int(os.environ.get("SCAN_DEGRADED_RETRY") or 1))
     in_flight: dict[int, str] = {}
     ip_started_mono: dict[int, float] = {}
     ip_last_state: dict[int, tuple[str, int]] = {}
@@ -1040,10 +1054,38 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                     else:
                         poll_results[idx] = details
                         if st == "completed":
+                            cov = ((details.get("evidence") or {}).get("host_coverage") or {}).get(host) or {}
+                            cov_verdict = str(cov.get("verdict") or "full")
+                            if cov_verdict.startswith("degraded") and degraded_retries.get(idx, 0) < degraded_retry_budget:
+                                degraded_retries[idx] = degraded_retries.get(idx, 0) + 1
+                                log.warning(
+                                    "Job %s IP %s: scan DEGRADED (%s) — %s; re-running once",
+                                    job_id, host, cov_verdict, cov.get("reason"),
+                                )
+                                emit_ip_event(
+                                    job_id, host, "coverage_retry", task_id=tid, verdict=cov_verdict,
+                                    reason=cov.get("reason"), attempt=degraded_retries[idx], chunk_index=idx,
+                                )
+                                task_ids[idx] = None
+                                poll_results.pop(idx, None)
+                                in_flight.pop(idx, None)
+                                slot_sem.release()
+                                pending.append(idx)
+                                continue
+                            if cov_verdict.startswith("degraded"):
+                                log.error(
+                                    "Job %s IP %s: scan INCOMPLETE after retry (%s) — %s",
+                                    job_id, host, cov_verdict, cov.get("reason"),
+                                )
+                                emit_ip_event(
+                                    job_id, host, "coverage_incomplete", task_id=tid, verdict=cov_verdict,
+                                    reason=cov.get("reason"), chunk_index=idx,
+                                )
                             done_details[idx] = details
                             finished_idxs.append(idx)
                             emit_ip_event(
                                 job_id, host, "completed", task_id=tid, progress=100,
+                                coverage=cov_verdict,
                                 vulnerabilities=len(details.get("vulnerabilities") or []),
                                 report_id=(details.get("evidence") or {}).get("report_id"),
                                 report_results=(details.get("evidence") or {}).get("report_result_count"),

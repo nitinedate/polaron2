@@ -79,6 +79,9 @@ class JobResultsIn(BaseModel):
     assessment_verdict: str | None = None
     alive_test: str | None = None
     report_read_error: str | None = None
+    # V45.4: per-host coverage verdict from the agent (port scanner killed => degraded).
+    host_coverage: dict[str, Any] = Field(default_factory=dict)
+    degraded_hosts: list[str] = Field(default_factory=list)
 
 
 class AgentLogEntryIn(BaseModel):
@@ -248,6 +251,7 @@ def agent_job_results(
             alive_test=body.alive_test,
             report_read_error=body.report_read_error,
             agent_instance_id=(x_aetheris_agent_instance or agent_instance_id),
+            host_coverage=body.host_coverage,
         )
         if result.get("status") == "missing":
             raise HTTPException(

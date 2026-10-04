@@ -1561,6 +1561,8 @@ def scan_job_target_rows(db, job: dict[str, Any]) -> list[dict[str, Any]]:
         activity = str(state.get("activity") or "")
         if status == "completed":
             activity = "Completed"
+        elif status == "incomplete" and not activity:
+            activity = "Incomplete — scan coverage degraded"
         elif not activity:
             activity = "Waiting"
         c = counts.get(ip) or {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}

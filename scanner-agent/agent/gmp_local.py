@@ -699,6 +699,16 @@ def _report_evidence_from_xml(
         result_count = 0
     plugin_error_details = _plugin_error_details(report)
     plugin_errors = max(_as_int(report.findtext("errors/count"), 0), len(plugin_error_details))
+    # V45.4: explicit per-host coverage verdict (port scanner killed => degraded).
+    host_coverage: dict[str, dict[str, Any]] = {}
+    try:
+        from agent.scan_coverage import coverage_from_report
+
+        cov_hosts = [str(t).strip() for t in expected_targets if str(t).strip()] or sorted(host_ips)
+        for cov_host in cov_hosts:
+            host_coverage[cov_host] = coverage_from_report(report, host=cov_host, errors=plugin_error_details)
+    except Exception:
+        log.debug("coverage verdict failed for report %s", report_id, exc_info=True)
     scan_start = (report.findtext("scan_start") or "").strip() or None
     scan_end = (report.findtext("scan_end") or "").strip() or None
     run_status = (report.findtext("scan_run_status") or task_status or "").strip()
@@ -796,6 +806,7 @@ def _report_evidence_from_xml(
         "report_materialized_result_count": materialized_result_count,
         "plugin_error_count": plugin_errors,
         "plugin_error_details": plugin_error_details,
+        "host_coverage": host_coverage,
         "scan_start": scan_start,
         "scan_end": scan_end,
         "assessment_complete": assessment_complete,

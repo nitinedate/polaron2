@@ -1185,6 +1185,7 @@ def ingest_agent_results(
     alive_test: str | None = None,
     report_read_error: str | None = None,
     agent_instance_id: str | None = None,
+    host_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ingest an edge-agent result and persist host-assessment evidence.
 
@@ -1390,6 +1391,41 @@ def ingest_agent_results(
     orch["report_id"] = effective_report_id
     orch["skipped_hosts"] = skipped_details
     orch["assessed_hosts"] = assessed_list
+    # V45.4: per-IP coverage from the agent. A host whose port scanner was killed
+    # is shown as "incomplete" with the reason, never as a green "completed".
+    host_cov = host_coverage if isinstance(host_coverage, dict) else None
+    if isinstance(host_cov, dict) and host_cov:
+        tp = dict(orch.get("target_progress") or {}) if isinstance(orch.get("target_progress"), dict) else {}
+        degraded_now: list[str] = []
+        for cov_host, cov in host_cov.items():
+            if not isinstance(cov, dict):
+                continue
+            verdict = str(cov.get("verdict") or "full")
+            entry = dict(tp.get(cov_host) or {})
+            if verdict.startswith("degraded"):
+                degraded_now.append(str(cov_host))
+                entry["status"] = "incomplete"
+                entry["activity"] = f"Incomplete — {str(cov.get('reason') or verdict)[:160]}"
+            else:
+                entry["status"] = "completed"
+                entry["activity"] = "Completed"
+            entry["coverage"] = {
+                "verdict": verdict,
+                "open_tcp_ports": len(cov.get("open_tcp_ports") or []),
+                "nvts_launched": int(cov.get("nvts_launched") or 0),
+            }
+            tp[str(cov_host)] = entry
+        orch["target_progress"] = tp
+        orch["host_coverage"] = host_cov
+        orch["degraded_hosts"] = degraded_now
+        if degraded_now:
+            orch["completed_with_warnings"] = True
+            orch["clean_eligible"] = False
+            orch["partial"] = True
+            orch["partial_reason"] = (
+                f"{len(degraded_now)} host(s) incomplete — port scan did not finish: {', '.join(degraded_now[:5])}"
+            )[:500]
+            orch["edge_progress"] = {"pct": 100.0, "message": orch["partial_reason"]}
     orch["reachable_target_count"] = required_count
     orch["plugin_error_count"] = plugin_errors
     orch["result_payload_ok"] = result_payload_ok
