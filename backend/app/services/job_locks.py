@@ -999,6 +999,33 @@ def release_cpu_heavy_slot() -> None:
     lease.release()
 
 
+def cpu_heavy_lease_for_job(job_id: str) -> dict | None:
+    """V45.5: the live CPU-heavy lease (holder + heartbeat age) copying this job, else None.
+
+    This is the authoritative "is the extract worker alive" signal: the lease
+    heartbeat thread refreshes it every 15-60 s from inside the worker process.
+    """
+    if not job_id:
+        return None
+    for key in _cpu_slot_keys():
+        holder = _lock_held(key)
+        if not holder or heavy_holder_is_stale(holder):
+            continue
+        if str(holder.get("job_id") or "") == str(job_id):
+            try:
+                hb_age = _holder_heartbeat_age_sec(holder)
+            except Exception:
+                hb_age = 0.0
+            return {
+                "key": key,
+                "reason": holder.get("reason"),
+                "pid": holder.get("pid"),
+                "started": holder.get("started"),
+                "heartbeat_age_sec": round(float(hb_age), 1),
+            }
+    return None
+
+
 def cpu_heavy_slot_owned_by_job(job_id: str) -> bool:
     """True when a live CPU slot is already copying this job."""
     if not job_id:

@@ -213,9 +213,8 @@ function Start-AetherisService {
                 Write-Host "A worker container could not be stopped; invoking recovery." -ForegroundColor Yellow
             }
         }
-        $ok = Invoke-ComposeWithRecovery -Docker $Docker -ComposeArgs $composeArgs -Args $upArgs -AutoRecoverEngine:$AutoRecoverEngine
-        if (-not $ok) { $LASTEXITCODE = 1 } else { $LASTEXITCODE = 0 }
-        if ($LASTEXITCODE -ne 0) {
+        $waveOk = Invoke-ComposeWithRecovery -Docker $Docker -ComposeArgs $composeArgs -ComposeCommand $upArgs -AutoRecoverEngine:$AutoRecoverEngine
+        if (-not $waveOk) {
             if ($durable -contains "gvmd") {
                 Write-Host "Greenbone did not become healthy. Recent gvmd and pg-gvm logs:" -ForegroundColor Yellow
                 & $Docker @composeArgs logs --tail 40 gvmd pg-gvm 2>&1 | Write-Host

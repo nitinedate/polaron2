@@ -279,10 +279,20 @@ def _build_extracted_image_locked(db: Session, job_id: str, *, schema_name: str)
 
     from app.services.job_locks import CpuHeavySlotTimeout, ExtractSlotAlreadyHeld, cpu_heavy_slot
 
+    # V45.5: one liveness thread for the entire build - CPU-lane wait, image open,
+    # enumerate, filter, plan, shards, finalize. Bumps jobs.updated_at every 20 s
+    # and logs the current step every 90 s, so no stall detector can misfire on a
+    # healthy worker and the operator can see which step is slow.
+    from app.services.job_liveness import JobLiveness
+
+    _live = JobLiveness(schema_name, job_id, stage="extract", label="Extraction", lock_kind="extract")
+    _live.__enter__()
+    _live.step("waiting for CPU lane")
     _extract_slot = cpu_heavy_slot("extract", wait_sec=180.0, fail_closed=True, job_id=job_id)
     try:
         _extract_slot.__enter__()
     except ExtractSlotAlreadyHeld:
+        _live.__exit__(None, None, None)
         write_disk_log(
             db,
             job_id,
@@ -293,6 +303,7 @@ def _build_extracted_image_locked(db: Session, job_id: str, *, schema_name: str)
         db.commit()
         return {"status": "already_running"}
     except CpuHeavySlotTimeout as exc:
+        _live.__exit__(None, None, None)
         write_disk_log(
             db,
             job_id,
@@ -303,6 +314,7 @@ def _build_extracted_image_locked(db: Session, job_id: str, *, schema_name: str)
         db.commit()
         raise
     try:
+        _live.step("open virtual disk")
         execute(db, "UPDATE jobs SET status='building_disk', error=NULL, updated_at=NOW() WHERE id=:job_id", {"job_id": job_id})
         db.flush()
         write_disk_log(
@@ -382,6 +394,7 @@ def _build_extracted_image_locked(db: Session, job_id: str, *, schema_name: str)
         from app.services.extracted_disk import build_extracted_disk_to_minio
 
         try:
+            _live.step("extract")
             # Adaptive shared CPU/I/O admission across Disk/Android/iOS products. GPU OCR/RAG has a separate governed lane.
             result = build_extracted_disk_to_minio(db, job_id, vd, schema_name=schema_name)
         except Exception as exc:
@@ -609,4 +622,9 @@ def _build_extracted_image_locked(db: Session, job_id: str, *, schema_name: str)
         db.flush()
         return result
     finally:
+        try:
+            _live.write_summary(db)
+        except Exception:
+            pass
+        _live.__exit__(None, None, None)
         _extract_slot.__exit__(None, None, None)

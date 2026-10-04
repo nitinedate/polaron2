@@ -523,6 +523,15 @@ def analyze_job_pipeline(db, job_id: str) -> dict | None:
     )
     extract_complete = extract_uri and (files_total <= 0 or files_done >= files_total)
     heartbeat_stale = _job_age_sec(row) > stale_sec
+    # V45.5: a worker heartbeating its CPU lease is alive regardless of updated_at.
+    try:
+        from app.services.job_locks import cpu_heavy_lease_for_job
+
+        _lease = cpu_heavy_lease_for_job(job_id)
+        if _lease and float(_lease.get("heartbeat_age_sec") or 0) <= 180.0:
+            heartbeat_stale = False
+    except Exception:
+        pass
     if extract_complete and status in ("processing", "building_disk", "extracting"):
         from app.services.disk import restore_status_if_extract_complete
 

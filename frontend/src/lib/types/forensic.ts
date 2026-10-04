@@ -129,6 +129,8 @@ export interface Job {
   evidence_count?: number;
   created_at: string;
   updated_at: string;
+  /** V45.5: extract worker heartbeat (from its Redis lease); absent when no worker holds the job. */
+  worker_liveness?: { alive: boolean; heartbeat_age_sec?: number; pid?: number; reason?: string };
 }
 
 export interface JobList {

@@ -50,3 +50,28 @@ V45-patched 1.5.1 agent** so `Pack-Laptop-Zip.cmd` ships the fix from now on.
 | `laptop-scanner/.env` | `PORT_PROFILE=full`, `UDP_PROFILE=priority`, `GVM_OPTIMIZE_TEST=no`, 8 IP workers, watchdog (`MAX_SCAN_RUNTIME_SEC=5400`, `STALL_SEC=1500`), realistic SLO |
 
 Not changed (see review §6): multi-partition mount, NSRL index, downgrade-backup acquisition.
+
+## V45.3a hotfix (2026-10-04, evening)
+`scripts/docker-engine-recovery.ps1` and `scripts/stage-evidence.ps1` contained em dashes inside double-quoted
+strings. Windows PowerShell 5.1 reads a BOM-less file as CP-1252, where the em dash's third byte (0x94) decodes to
+`”`, which PowerShell accepts as a closing quote -> "The string is missing the terminator" at line 130 / missing `}`
+at 88 and 74. Both scripts are now pure ASCII (verified with the PowerShell parser under UTF-8 and CP-1252).
+Also fixed: `Invoke-ComposeWithRecovery` parameter `-Args` collided with PowerShell's automatic `$args`, so the
+`up` arguments were dropped; renamed to `-ComposeCommand`. The rm-f and engine-restart recovery branches were
+exercised against a fake `docker` (up fails -> rm -f -> up ok; rm -f fails -> wsl --shutdown -> engine back -> up ok).
+
+## V45.5 - false "Extraction stalled (no progress) - re-queuing from last checkpoint"
+Every stall detector keyed on `jobs.updated_at`: frontend auto-resume (240 s), API `/resume` (240 s), pipeline
+supervisor (`PIPELINE_STALE_SEC`=55 s). Extraction only wrote that column from inside a few wrapped steps, so a
+healthy worker waiting for the CPU lane, opening the E01, enumerating or planning was declared dead and re-queued.
+| File | Change |
+|---|---|
+| `backend/app/services/job_liveness.py` | NEW - task-level liveness thread: bumps `updated_at` every 20 s, refreshes the job lock, logs the current step every 90 s, step timings; `mark_step(job_id, ...)` registry |
+| `backend/app/services/inventory_liveness.py` | now a thin subclass (also bumps `updated_at`) |
+| `backend/app/services/disk.py` | whole build wrapped in liveness: waiting for CPU lane -> open virtual disk -> extract -> summary |
+| `backend/app/services/extracted_disk.py` | step markers: enumerate filesystem, filter + save plan, plan I/O, extract shards, finalize manifest |
+| `backend/app/services/job_locks.py` | `cpu_heavy_lease_for_job()` - the worker's own lease heartbeat as the authoritative liveness |
+| `backend/app/services/job_control.py` | `extraction_is_stale()` consults the lease before declaring stale; `extract_worker_liveness()` |
+| `backend/app/services/pipeline_supervisor.py` | `heartbeat_stale` cleared when the lease is fresh |
+| `backend/app/routers/jobs.py` | job rows carry `worker_liveness`; `/resume` on a live job refreshes `updated_at` and explains instead of re-queueing |
+| `frontend/src/...` | auto-resume and the stale banner skip jobs whose `worker_liveness.alive` is true (tsc clean) |

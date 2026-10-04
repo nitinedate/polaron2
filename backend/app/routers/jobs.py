@@ -516,6 +516,15 @@ def _job_row(row: dict, *, enrichment: dict | None = None) -> dict:
         "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created),
         "updated_at": updated.isoformat() if hasattr(updated, "isoformat") else str(updated),
     }
+    # V45.5: let the UI see the worker's own heartbeat so it never auto-resumes a live job.
+    try:
+        from app.services.job_control import extract_worker_liveness
+
+        liveness = extract_worker_liveness(row)
+        if liveness is not None:
+            out["worker_liveness"] = liveness
+    except Exception:
+        pass
     if enrichment:
         out["enrichment"] = enrichment
         if not out.get("extract_coverage") and (
@@ -2800,10 +2809,21 @@ def resume_job(
     row = _ensure_job(db, job_id)
     stale = extraction_is_stale(row)
     if row["status"] in ("building_disk", "processing") and not stale:
+        from app.services.job_control import extract_worker_liveness
+
+        live = extract_worker_liveness(row) or {}
+        detail = (
+            f" (worker alive, heartbeat {live.get('heartbeat_age_sec', 0):.0f}s ago)"
+            if live.get("alive")
+            else ""
+        )
+        # Keep updated_at fresh so the client-side 240 s detector stops looping.
+        execute(db, "UPDATE jobs SET updated_at=NOW() WHERE id=:id", {"id": job_id})
+        db.commit()
         return {
             "job_id": job_id,
             "status": row["status"],
-            "message": "Disk build already in progress",
+            "message": "Disk build already in progress" + detail,
         }
     if row["status"] in ("building_disk", "processing") and stale:
         from app.services.disk_build_log import write_disk_log

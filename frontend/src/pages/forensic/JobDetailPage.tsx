@@ -679,7 +679,9 @@ export function JobDetailPage() {
   useEffect(() => {
     if (!jobId || !job || !canRun || processing) return;
     const extracting = job.status === "building_disk" || job.status === "processing";
-    const stale = extracting && isJobStale(job.updated_at, true, 240_000);
+    // V45.5: a worker that is heartbeating its lease is alive even if updated_at lags.
+    const workerAlive = job.worker_liveness?.alive === true;
+    const stale = extracting && !workerAlive && isJobStale(job.updated_at, true, 240_000);
     const needsResume =
       job.status === "failed" ||
       job.status === "paused" ||

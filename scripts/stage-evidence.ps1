@@ -1,18 +1,18 @@
-# V45.3 — Stage evidence (E01/EWF segments, DD, mobile dumps) into the docker-desktop VM.
+# V45.3 - Stage evidence (E01/EWF segments, DD, mobile dumps) into the docker-desktop VM.
 #
 #   .\scripts\stage-evidence.ps1 -Source "G:\Image of Reception Laptop" -CaseName reception-laptop
 #
 # Why: the forensic workers read evidence through Docker Desktop's Windows
 # file-sharing layer when it sits on G:\ / F:\ bind mounts. That layer tops out
 # at a few MB/s under parallel seeks (the 2 h 15 m / 50 GB extraction) and a
-# worker blocked inside it is in an uninterruptible kernel state — the source of
+# worker blocked inside it is in an uninterruptible kernel state - the source of
 #   "cannot stop container ... tried to kill container, but did not receive an exit event".
 # Staging copies the files ONCE, sequentially (what the sharing layer is good
 # at), into a named volume that is native ext4 inside the VM. Extraction then
 # reads at NVMe speed and the container always stops cleanly.
 #
 # The volume is mounted in api / worker-disk / worker-parse as /host/<letter>
-# (default z) so it shows in the UI as drive Z: — register evidence from there
+# (default z) so it shows in the UI as drive Z: - register evidence from there
 # exactly as from any other drive. Nothing in the workflow changes.
 param(
     [Parameter(Mandatory = $true)][string]$Source,

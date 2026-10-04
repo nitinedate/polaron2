@@ -207,7 +207,40 @@ def extraction_is_stale(row: dict | None, *, threshold_sec: float = 240.0) -> bo
     if getattr(updated, "tzinfo", None) is None:
         updated = updated.replace(tzinfo=timezone.utc)
     age = (datetime.now(timezone.utc) - updated).total_seconds()
-    return age > threshold_sec
+    if age <= threshold_sec:
+        return False
+    # V45.5: jobs.updated_at is a weak signal (only some steps write it). Before
+    # declaring the worker dead, consult its Redis lease heartbeat, which the
+    # worker refreshes from inside the process regardless of which step runs.
+    try:
+        from app.services.job_locks import cpu_heavy_lease_for_job
+
+        lease = cpu_heavy_lease_for_job(str(row.get("id") or ""))
+        if lease and float(lease.get("heartbeat_age_sec") or 0) <= 180.0:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def extract_worker_liveness(row: dict | None) -> dict | None:
+    """V45.5: {alive, heartbeat_age_sec, pid, since} for the UI/API, or None when no worker holds this job."""
+    if not row or row.get("status") not in ("building_disk", "processing"):
+        return None
+    try:
+        from app.services.job_locks import cpu_heavy_lease_for_job
+
+        lease = cpu_heavy_lease_for_job(str(row.get("id") or ""))
+    except Exception:
+        return None
+    if not lease:
+        return {"alive": False}
+    return {
+        "alive": float(lease.get("heartbeat_age_sec") or 0) <= 180.0,
+        "heartbeat_age_sec": lease.get("heartbeat_age_sec"),
+        "pid": lease.get("pid"),
+        "reason": lease.get("reason"),
+    }
 
 
 def set_celery_task_id(db, job_id: str, task_id: str | None) -> None:

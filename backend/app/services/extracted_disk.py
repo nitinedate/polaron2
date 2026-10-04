@@ -50,6 +50,16 @@ from app.services.extract_shard_v45 import (
 )
 from app.services.virtual_disk import vd_plan as _vd_plan
 
+
+def _mark_live_step(job_id: str, name: str, **extra) -> None:
+    """V45.5: step marker for the task-level liveness thread (no-op when absent)."""
+    try:
+        from app.services.job_liveness import mark_step
+
+        mark_step(job_id, name, **extra)
+    except Exception:
+        pass
+
 log = logging.getLogger("extracted_disk")
 
 _PROGRESS_LOG_INTERVAL_SEC = 12
@@ -1342,6 +1352,7 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
                     level="warning",
                 )
                 db.commit()
+        _mark_live_step(job_id, "enumerate filesystem")
         with disk_log_heartbeat(
             schema_name,
             job_id,
@@ -1420,6 +1431,7 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
             stage="extract",
         )
         db.commit()
+        _mark_live_step(job_id, "filter + save plan")
         with disk_log_heartbeat(
             schema_name,
             job_id,
@@ -1457,6 +1469,7 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
             existing_cp["nodes_uri"] = nodes_uri
             save_extraction_checkpoint(db, job_id, existing_cp)
 
+    _mark_live_step(job_id, "plan I/O")
     # E01: one reader (random seeks kill throughput). Folder iOS backups: many
     # parallel readers — this stage is I/O, not GPU/NPU.
     configured_readers = max(int(settings.extract_disk_workers or 1), 1)
@@ -1919,6 +1932,7 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
         return checkpoint, done_shards, all_index, total_files, total_bytes, total_skipped
 
     try:
+        _mark_live_step(job_id, "extract shards")
         with disk_log_heartbeat(
             schema_name,
             job_id,
@@ -2029,6 +2043,7 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
         )
         db.commit()
 
+    _mark_live_step(job_id, "finalize manifest")
     all_index, part_uris = checkpoint_index_and_parts(checkpoint)
     _mark_finalizing()
     return _finalize_manifest(

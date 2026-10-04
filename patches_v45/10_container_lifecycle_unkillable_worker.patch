@@ -1,5 +1,5 @@
---- a/docker-compose.yml	2026-10-04 16:12:19.550711694 +0000
-+++ b/docker-compose.yml	2026-10-04 16:12:19.685753415 +0000
+--- a/docker-compose.yml	2026-10-04 05:27:18.000000000 +0000
++++ b/docker-compose.yml	2026-10-04 16:14:30.550438163 +0000
 @@ -27,6 +27,19 @@
      - default
      - aetheris-common
@@ -31,7 +31,26 @@
    RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
    RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}
    RESOURCE_GOVERNOR_GROUP: ${RESOURCE_GOVERNOR_GROUP:-aetheris-host}
-@@ -375,6 +392,8 @@
+@@ -42,10 +59,14 @@
+   RESOURCE_GOVERNOR_CPU_MAX_SLOTS: ${RESOURCE_GOVERNOR_CPU_MAX_SLOTS:-10}
+   RESOURCE_GOVERNOR_GPU_MAX_SLOTS: ${RESOURCE_GOVERNOR_GPU_MAX_SLOTS:-4}
+   GPU_RELEASE_MODEL_AFTER_TASK: ${GPU_RELEASE_MODEL_AFTER_TASK:-true}
+-  # Small per-process pools prevent Celery prefork children from exhausting Postgres.
+-  DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-2}
+-  DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-2}
+-  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
++  # V45: one extraction task runs main + flusher + stop-poller + heartbeat sessions.
++  # The old 2+2 pool was fully consumed by those four, so the first shard thread that
++  # needed a connection died with "QueuePool limit of size 2 overflow 2 reached".
++  # Shard threads are now DB-free (extract_shard_v45); 4+8 leaves headroom for
++  # phase-3 hand-offs. Budget: worker-disk 8 x 12 + worker-parse 6 x 12 < max_connections=200.
++  DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-4}
++  DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-8}
++  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-90}
+   MINIO_ENDPOINT: minio:9000
+   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+@@ -371,6 +392,8 @@
  
    api:
      <<: *common-net
@@ -40,7 +59,15 @@
      image: rag_new2-api
      build:
        context: ./backend
-@@ -441,7 +460,7 @@
+@@ -405,6 +428,7 @@
+       - ./scripts:/scripts
+       - ./migrations:/migrations
+       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
++      - evidence_staging:/host/${EVIDENCE_STAGING_LETTER:-z}
+       - type: bind
+         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data
+         target: /app/data
+@@ -437,7 +461,7 @@
  
    # Disk extract/parse — forensic product only (vuln scans live in services/vuln).
    worker-disk:
@@ -49,7 +76,32 @@
      image: rag_new2-api
      build:
        context: ./backend
-@@ -490,7 +509,7 @@
+@@ -452,12 +476,18 @@
+       - ./backend:/app
+       - ./scripts:/scripts:ro
+       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
++      - evidence_staging:/host/${EVIDENCE_STAGING_LETTER:-z}
+       - type: bind
+         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/job-data
+         target: /app/data
+       - type: bind
+         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/uploads
+         target: /app/data/uploads
++      # V45: scratch for shard spool/parts. Point EXTRACT_SCRATCH_HOST_DIR at an NVMe/SSD
++      # folder when the evidence drive is a USB HDD so reads and temp writes never share spindles.
++      - type: bind
++        source: ${EXTRACT_SCRATCH_HOST_DIR:-${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/scratch}
++        target: /scratch
+     depends_on:
+       api:
+         condition: service_healthy
+@@ -476,11 +506,12 @@
+       - --concurrency=8
+       - --prefetch-multiplier=1
+       - -Q
+-      - disk-build
++      # V45.2: inventory has its own lane; the disk pool is idle after extraction.
++      - disk-build,disk-inventory
  
    # Dedicated parse pool so parse bursts cannot occupy every disk-build process.
    worker-parse:
@@ -58,7 +110,20 @@
      image: rag_new2-api
      build:
        context: ./backend
-@@ -529,7 +548,7 @@
+@@ -494,6 +525,7 @@
+       - ./backend:/app
+       - ./scripts:/scripts:ro
+       - ${HOST_EVIDENCE_PATH:-./evidence}:/evidence:ro
++      - evidence_staging:/host/${EVIDENCE_STAGING_LETTER:-z}
+       - type: bind
+         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/job-data
+         target: /app/data
+@@ -515,11 +547,11 @@
+       - --concurrency=${PARSE_CELERY_CONCURRENCY:-6}
+       - --prefetch-multiplier=1
+       - -Q
+-      - disk-parse
++      - disk-parse,disk-inventory
  
    # GPU embeddings on rag-index. OCR runs on worker-ocr-gpu so both can overlap.
    worker-rag-gpu:
@@ -67,7 +132,7 @@
      image: rag_new2-api
      build:
        context: ./backend
-@@ -597,7 +616,7 @@
+@@ -587,7 +619,7 @@
  
    # Dedicated OCR GPU worker — independent of RAG embeddings (two GPU slots).
    worker-ocr-gpu:
@@ -76,7 +141,7 @@
      image: rag_new2-api
      build:
        context: ./backend
-@@ -656,7 +675,7 @@
+@@ -646,7 +678,7 @@
        - ocr
  
    worker-report:
@@ -85,7 +150,7 @@
      image: rag_new2-api
      build:
        context: ./backend
-@@ -697,7 +716,7 @@
+@@ -687,7 +719,7 @@
  
    # Forensic Agentic AI — isolated from disk-build / rag-index
    worker-agent:
@@ -94,7 +159,7 @@
      image: rag_new2-api
      build:
        context: ./backend
-@@ -742,7 +761,7 @@
+@@ -732,7 +764,7 @@
        - agent-orchestration
  
    worker-beat:
@@ -103,9 +168,31 @@
      image: rag_new2-api
      build:
        context: ./backend
---- a/backend/app/celery_factory.py	2026-10-04 16:12:19.550928774 +0000
-+++ b/backend/app/celery_factory.py	2026-10-04 16:12:23.899867364 +0000
-@@ -104,6 +104,8 @@
+@@ -776,6 +808,11 @@
+         condition: service_healthy
+ 
+ volumes:
++  # V45.3: evidence staged into the docker-desktop VM (ext4). Reads are native —
++  # no Windows file-sharing layer, so no 2-3 MB/s ceiling and no unkillable
++  # D-state worker. Appears in the UI as drive ${EVIDENCE_STAGING_LETTER:-Z}:.
++  # Fill it with Stage-Evidence.cmd <source folder> <case name>.
++  evidence_staging:
+   neo4j_data:
+   opensearch_data:
+ 
+--- a/backend/app/celery_factory.py	2026-10-03 18:34:39.000000000 +0000
++++ b/backend/app/celery_factory.py	2026-10-04 16:13:14.233939594 +0000
+@@ -30,7 +30,8 @@
+     "app.tasks.rag_append_task": {"queue": "rag-index"},
+     "app.tasks.ocr_drain_task": {"queue": "ocr"},
+     "app.tasks.ocr_bucket_task": {"queue": "ocr"},
+-    "app.tasks.axiom_artifact_inventory_task": {"queue": "disk-parse"},
++    # V45.2: own lane — inventory no longer waits behind parse/enrich on disk-parse.
++    "app.tasks.axiom_artifact_inventory_task": {"queue": "disk-inventory"},
+     "app.tasks.graph_sync_task": {"queue": "agent-orchestration"},
+     "app.tasks.rag_enrich_task": {"queue": "disk-parse"},
+     "app.tasks.report_gen_task": {"queue": "report-gen"},
+@@ -103,6 +104,8 @@
      "accept_content": ["json"],
      "task_track_started": True,
      "task_acks_late": True,
@@ -114,7 +201,7 @@
      "worker_prefetch_multiplier": 1,
      "broker_connection_retry_on_startup": True,
      "broker_connection_retry": True,
-@@ -151,4 +153,53 @@
+@@ -150,4 +153,53 @@
                  "kwargs": {},
              },
          }
@@ -168,8 +255,8 @@
 +        worker_process_shutdown.connect(_release_on_shutdown, weak=False)
 +    except Exception:
 +        pass
---- a/scripts/start-stack.ps1	2026-10-04 16:12:19.550969214 +0000
-+++ b/scripts/start-stack.ps1	2026-10-04 16:13:14.202815665 +0000
+--- a/scripts/start-stack.ps1	2026-10-04 08:42:17.000000000 +0000
++++ b/scripts/start-stack.ps1	2026-10-04 16:35:27.482333942 +0000
 @@ -6,12 +6,16 @@
      [switch]$IncludeGvm,
      [switch]$IncludeWazuh,
@@ -188,11 +275,12 @@
  
  function Get-Docker {
      $docker = Get-Command docker -ErrorAction SilentlyContinue
-@@ -199,7 +203,18 @@
+@@ -199,8 +203,18 @@
              $buildOnce = $false
          }
          $upArgs += $durable
 -        & $Docker @composeArgs @upArgs
+-        if ($LASTEXITCODE -ne 0) {
 +        # V45.3: workers are stopped with their grace period BEFORE recreate so Celery
 +        # cold-shutdown can release CUDA/locks; `up -d` alone uses a 10 s default and
 +        # SIGKILLs mid-task, which is what produced the unkillable container.
@@ -203,13 +291,13 @@
 +                Write-Host "A worker container could not be stopped; invoking recovery." -ForegroundColor Yellow
 +            }
 +        }
-+        $ok = Invoke-ComposeWithRecovery -Docker $Docker -ComposeArgs $composeArgs -Args $upArgs -AutoRecoverEngine:$AutoRecoverEngine
-+        if (-not $ok) { $LASTEXITCODE = 1 } else { $LASTEXITCODE = 0 }
-         if ($LASTEXITCODE -ne 0) {
++        $waveOk = Invoke-ComposeWithRecovery -Docker $Docker -ComposeArgs $composeArgs -ComposeCommand $upArgs -AutoRecoverEngine:$AutoRecoverEngine
++        if (-not $waveOk) {
              if ($durable -contains "gvmd") {
                  Write-Host "Greenbone did not become healthy. Recent gvmd and pg-gvm logs:" -ForegroundColor Yellow
---- a/script_docker/start_docker.ps1	2026-10-04 16:12:19.551055863 +0000
-+++ b/script_docker/start_docker.ps1	2026-10-04 16:13:14.203821527 +0000
+                 & $Docker @composeArgs logs --tail 40 gvmd pg-gvm 2>&1 | Write-Host
+--- a/script_docker/start_docker.ps1	2026-10-04 08:42:17.000000000 +0000
++++ b/script_docker/start_docker.ps1	2026-10-04 16:13:14.238578527 +0000
 @@ -372,7 +372,9 @@
  $stackArgs = @(
      "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -221,8 +309,8 @@
  )
  # Production and the public host publish 80/443. Do not also bind 0.0.0.0:3000
  # here — that port is already taken on the production machine, and the HTTPS
---- a/services/mobile-android/docker-compose.yml	2026-10-04 16:13:46.037380614 +0000
-+++ b/services/mobile-android/docker-compose.yml	2026-10-04 16:13:46.072789733 +0000
+--- a/services/mobile-android/docker-compose.yml	2026-10-04 10:30:54.000000000 +0000
++++ b/services/mobile-android/docker-compose.yml	2026-10-04 16:13:46.115970814 +0000
 @@ -13,6 +13,9 @@
    VULN_MODULE_ENABLED: "false"
    DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
@@ -302,8 +390,8 @@
      depends_on:
        api: {condition: service_healthy}
        nvidia-cuda: {condition: service_healthy}
---- a/services/mobile-ios/docker-compose.yml	2026-10-04 16:13:46.041135600 +0000
-+++ b/services/mobile-ios/docker-compose.yml	2026-10-04 16:13:46.088567465 +0000
+--- a/services/mobile-ios/docker-compose.yml	2026-10-04 10:30:54.000000000 +0000
++++ b/services/mobile-ios/docker-compose.yml	2026-10-04 16:13:46.117600933 +0000
 @@ -13,6 +13,9 @@
    VULN_MODULE_ENABLED: "false"
    DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic

@@ -107,7 +107,7 @@ export function AgentPipelineBanner({
       (pp?.phase === "artifact_inventory" && !pipelineComplete) ||
       (!pipelineComplete && job.status === "indexed")) &&
     !pipelineComplete;
-  const stale = isJobStale(job.updated_at, active && !pollStopped);
+  const stale = isJobStale(job.updated_at, active && !pollStopped) && job.worker_liveness?.alive !== true;
   const huddle =
     pp?.orchestration && typeof pp.orchestration === "object"
       ? (

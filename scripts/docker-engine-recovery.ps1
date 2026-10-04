@@ -1,4 +1,4 @@
-# V45.3 — Docker Desktop (WSL2) recovery for stuck containers.
+# V45.3 - Docker Desktop (WSL2) recovery for stuck containers.
 #
 # Symptom (production, during `docker compose up -d` recreate):
 #   Error response from daemon: cannot stop container: <id>: tried to kill container,
@@ -12,7 +12,7 @@
 #      cold-shutdown can release GPU/locks and exit on its own);
 #   2. on the daemon error, tries `docker rm -f`; if that fails,
 #   3. restarts the Docker Desktop engine (`wsl --shutdown` + relaunch) and waits
-#      for `docker info` — gated by -AutoRecoverEngine so an operator can opt out.
+#      for `docker info` - gated by -AutoRecoverEngine so an operator can opt out.
 # Dot-source from start-stack.ps1.
 
 function Test-StuckContainerError {
@@ -86,7 +86,7 @@ function Restart-DockerDesktopEngine {
     try { & wsl --shutdown 2>&1 | ForEach-Object { Write-Host "  wsl: $_" } } catch {}
     Start-Sleep -Seconds 5
     if (-not $exe) {
-        Write-Host "Docker Desktop.exe not found — start Docker Desktop manually, then re-run." -ForegroundColor Red
+        Write-Host "Docker Desktop.exe not found - start Docker Desktop manually, then re-run." -ForegroundColor Red
         return $false
     }
     Start-Process -FilePath $exe | Out-Null
@@ -108,10 +108,10 @@ function Invoke-ComposeWithRecovery {
     param(
         [string]$Docker,
         [string[]]$ComposeArgs,
-        [string[]]$Args,
+        [string[]]$ComposeCommand,
         [switch]$AutoRecoverEngine
     )
-    $out = & $Docker @ComposeArgs @Args 2>&1
+    $out = & $Docker @ComposeArgs @ComposeCommand 2>&1
     $out | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -eq 0) { return $true }
     $text = ($out | Out-String)
@@ -130,7 +130,7 @@ function Invoke-ComposeWithRecovery {
         Write-Host "Run again with -AutoRecoverEngine (or restart Docker Desktop manually: wsl --shutdown) and retry." -ForegroundColor Red
         return $false
     }
-    $out = & $Docker @ComposeArgs @Args 2>&1
+    $out = & $Docker @ComposeArgs @ComposeCommand 2>&1
     $out | ForEach-Object { Write-Host $_ }
     return ($LASTEXITCODE -eq 0)
 }
