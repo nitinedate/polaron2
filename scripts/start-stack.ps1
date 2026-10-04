@@ -183,7 +183,14 @@ function Start-AetherisService {
 
         if (-not $durable.Count) { continue }
         Write-Host "Starting $($Name) wave: $($durable -join ', ')"
-        $waitSec = if ($durable -contains "ollama" -or $oneShots -contains "ollama-init") { "7200" } else { "600" }
+        $waitSec = "600"
+        if ($durable -contains "ollama" -or $oneShots -contains "ollama-init") {
+            $waitSec = "7200"
+        }
+        elseif ($durable -contains "gvmd") {
+            # Covers pg-gvm recovery plus gvmd's 10 minute start period.
+            $waitSec = "2400"
+        }
         $upArgs = @("up", "-d", "--remove-orphans", "--wait", "--wait-timeout", $waitSec)
         if ($buildOnce) {
             $upArgs += "--build"
@@ -192,6 +199,10 @@ function Start-AetherisService {
         $upArgs += $durable
         & $Docker @composeArgs @upArgs
         if ($LASTEXITCODE -ne 0) {
+            if ($durable -contains "gvmd") {
+                Write-Host "Greenbone did not become healthy. Recent gvmd and pg-gvm logs:" -ForegroundColor Yellow
+                & $Docker @composeArgs logs --tail 40 gvmd pg-gvm 2>&1 | Write-Host
+            }
             throw "docker compose failed for $Name wave [$($durable -join ', ')] (exit $LASTEXITCODE)"
         }
     }

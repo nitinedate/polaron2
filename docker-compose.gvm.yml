@@ -107,6 +107,14 @@ services:
     depends_on:
       pg-gvm-migrator:
         condition: service_completed_successfully
+    # A cold production volume can spend several minutes in recovery. The image
+    # check gives up after about four minutes and then only three probes.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "gvmd", "-d", "gvmd"]
+      interval: 10s
+      timeout: 20s
+      retries: 18
+      start_period: 300s
     profiles: [gvm]
 
   gvmd:
@@ -124,7 +132,7 @@ services:
       - gvm_psql_socket:/var/run/postgresql
     depends_on:
       pg-gvm:
-        condition: service_started
+        condition: service_healthy
       scap-data:
         condition: service_healthy
       cert-bund-data:
@@ -135,6 +143,20 @@ services:
         condition: service_healthy
       report-formats:
         condition: service_healthy
+    # The image probe runs `<get_version/>` with a 3s timeout and 3 retries
+    # after 4 minutes. On a loaded production host that marks gvmd unhealthy
+    # while it is still opening the scanner database, and `compose up --wait`
+    # then aborts the rest of the start. Readiness here is the GMP socket.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import socket;s=socket.socket(socket.AF_UNIX);s.settimeout(8);s.connect('/run/gvmd/gvmd.sock')\"",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 40
+      start_period: 600s
     profiles: [gvm]
 
   configure-openvas:
