@@ -150,6 +150,46 @@ BUILD_ARTIFACT_EXTS: frozenset[str] = frozenset({
     ".d", ".gcno", ".gcda", ".gch", ".mod", ".smod",
 })
 
+# Browser and OS caches. A folder the user named "Cache" is not enough — the
+# path must be a known browser or Windows cache tree. Named browser databases
+# stay even if a parent folder contains "cache".
+_REGENERABLE_CACHE_MARKERS: tuple[str, ...] = (
+    "/inetcache/",
+    "/temporary internet files/",
+    "/webcache/",
+    "/d3dscache/",
+    "/code cache/",
+    "/gpucache/",
+    "/cache2/",
+    "/blob_storage/",
+    "/service worker/cachestorage/",
+    "/dawngraphitecache/",
+    "/dawnwebgpucache/",
+    "/appdata/local/pip/",
+    "/appdata/local/nuget/",
+    "/appdata/local/yarn/",
+    "/appdata/local/pnpm/",
+    "/crashdumps/",
+)
+_BROWSER_CACHE_HOSTS: tuple[str, ...] = (
+    "/chrome/", "/edge/", "/chromium/", "/brave", "/opera/", "/vivaldi/",
+    "/firefox/", "/mozilla/",
+)
+_CACHE_KEEP_NAMES: frozenset[str] = frozenset({
+    "history", "cookies", "web data", "login data", "favicons", "top sites",
+    "places.sqlite", "cookies.sqlite", "bookmarks", "bookmarks.bak",
+    "webcachev01.dat", "preferences",
+})
+
+
+def _is_regenerable_cache(path: str, base: str) -> bool:
+    if base in _CACHE_KEEP_NAMES:
+        return False
+    if any(marker in path for marker in _REGENERABLE_CACHE_MARKERS):
+        return True
+    return "/cache/" in path and any(host in path for host in _BROWSER_CACHE_HOSTS)
+
+
 # Package-manager download caches. The installer is re-downloadable and carries
 # no user content. A dropper saved to Downloads matches none of these paths.
 PACKAGE_CACHE_TREES: tuple[str, ...] = (
@@ -220,6 +260,12 @@ NOISE_RULES: tuple[NoiseRule, ...] = (
         "Package-manager download cache entry.",
         "Re-downloadable vendor installer in a cache path. Installers in user "
         "download or temp paths are NOT matched.",
+    ),
+    NoiseRule(
+        "regenerable_cache",
+        "Browser or OS cache payload (disk cache, INetCache, GPU cache, package cache).",
+        "Rebuilt by the application. Browser databases and extensionless files "
+        "outside those cache trees are kept, including unknowns in Temp.",
     ),
     NoiseRule(
         "structural_pseudo_file",
@@ -388,7 +434,10 @@ def classify_noise(
     # extensionless evidence directory) is evidence by definition — nothing below
     # may discard it. A *broad* claim only means the file sits inside a tree we
     # collect by default; that does not shield a node_modules copy of lodash.
-    if scope_claim_strength(p, os_family=os_family, name=base) == "specific":
+    # A profile regex (Chrome "User Data/Default/") is a specific claim for the
+    # profile, not for every cache body inside it. Named artifacts are not
+    # regenerable cache, so they stay protected.
+    if scope_claim_strength(p, os_family=os_family, name=base) == "specific" and not _is_regenerable_cache(p, base):
         return NoiseVerdict(False, detail="protected: specific OS artifact claim")
 
     # Zero-byte files are NOT noise. A zero-byte file proves a name existed —
@@ -445,6 +494,9 @@ def classify_noise(
     # --- package caches ------------------------------------------------------
     if pol.rule_active("package_download_cache") and _contains(p, PACKAGE_CACHE_TREES):
         return NoiseVerdict(True, "package_download_cache", "package-manager download cache")
+
+    if pol.rule_active("regenerable_cache") and _is_regenerable_cache(p, base):
+        return NoiseVerdict(True, "regenerable_cache", "browser or OS cache payload")
 
     return NoiseVerdict(False)
 
