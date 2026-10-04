@@ -21,7 +21,7 @@ x-extract-volumes: &extract-volumes
 x-extract-env: &extract-env
   AETHERIS_SERVICE: mobile-extract
   VULN_MODULE_ENABLED: "false"
-  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/mobile_extract
+  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
   REDIS_URL: redis://redis:6379/4
   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}
   RESOURCE_GOVERNOR_REDIS_URL: ${RESOURCE_GOVERNOR_REDIS_URL:-redis://redis:6379/15}

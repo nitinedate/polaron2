@@ -1,10 +1,10 @@
 # Aetheris isolated forensic services
 
-Aetheris runs Disk, Android, iOS, and Vulnerability workflows as independent products. They share one Postgres, Redis, MinIO, pgAdmin, and MailHog (`services/common/docker-compose.yml`). Each product still has its own database, Redis logical database, MinIO bucket, worker queues, and UI route.
+Aetheris runs Disk, Android, iOS, and Vulnerability workflows as independent products. They share one Postgres database (`forensic`, host port 5434), Redis, MinIO, pgAdmin, and MailHog (`services/common/docker-compose.yml`). Each product still has its own Redis logical database, MinIO bucket, worker queues, and UI route.
 
 | Product | Compose file | UI | API | Job/worker namespace |
 |---|---|---:|---:|---|
-| Shared infrastructure | `services/common/docker-compose.yml` | pgAdmin `:5052` | Postgres `:5434`, Redis `:6380`, MinIO `:9004` | databases, buckets, and Redis DBs stay separate |
+| Shared infrastructure | `services/common/docker-compose.yml` | pgAdmin `:5052` | Postgres `:5434` database `forensic`, Redis `:6380`, MinIO `:9004` | one application database; buckets and Redis DBs stay separate |
 | Disk Forensics | `services/forensic/docker-compose.yml` | gateway `:3000/:3001` | `:8083` | `disk-*` / forensic queues |
 | Android Forensics | `services/mobile-android/docker-compose.yml` | `:3002` | `:8081` | `android-*` |
 | iOS Forensics | `services/mobile-ios/docker-compose.yml` | `:3004` | `:8084` | `ios-*` |

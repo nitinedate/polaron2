@@ -69,6 +69,25 @@ type AuthorityForm = {
   cloud_mail_secret: string;
 };
 
+function deviceMatchesPlatform(osFamily: string | undefined, platform: "android" | "ios" | null): boolean {
+  if (!platform) return true;
+  return String(osFamily || "").toLowerCase().includes(platform);
+}
+
+function otherAcquireLabel(osFamily?: string | null): string {
+  const raw = String(osFamily || "").toLowerCase();
+  if (raw.includes("ios")) return "iOS";
+  if (raw.includes("android")) return "Android";
+  return "the matching";
+}
+
+function otherAcquirePath(osFamily?: string | null): string | null {
+  const raw = String(osFamily || "").toLowerCase();
+  if (raw.includes("ios")) return "/mobile/ios/acquire";
+  if (raw.includes("android")) return "/mobile/android/acquire";
+  return null;
+}
+
 function ownerAgentForFamily(family?: string | null): { id: string; label: string } | null {
   const raw = String(family || "").toLowerCase();
   if (raw.includes("ios") || raw.includes("iphone") || raw.includes("ipad")) {
@@ -476,6 +495,7 @@ export function MobileAcquisitionPage() {
   const [step, setStep] = useState<Step>("connect");
   const [adapters, setAdapters] = useState<AcquisitionAdapter[]>([]);
   const [devices, setDevices] = useState<DetectedDevice[]>([]);
+  const [otherDevices, setOtherDevices] = useState<DetectedDevice[]>([]);
   const [detectWarnings, setDetectWarnings] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
 
@@ -520,6 +540,7 @@ export function MobileAcquisitionPage() {
   const formRef = useRef(form);
   const scanInFlightRef = useRef(false);
   const lastDeviceKeyRef = useRef("");
+  const lastOtherDeviceKeyRef = useRef("");
   const runRef = useRef(run);
   formRef.current = form;
   runRef.current = run;
@@ -820,11 +841,13 @@ export function MobileAcquisitionPage() {
           mergedDevices.set(key, converted as DetectedDevice);
         }
       }
-      const devicesNow = [...mergedDevices.values()].filter((device) => {
-        if (!fixedPlatform) return true;
-        return String(device.os_family || "").toLowerCase().includes(fixedPlatform);
-      });
+      const allDevices = [...mergedDevices.values()];
+      const devicesNow = allDevices.filter((device) => deviceMatchesPlatform(device.os_family, fixedPlatform));
+      const otherNow = fixedPlatform
+        ? allDevices.filter((device) => !deviceMatchesPlatform(device.os_family, fixedPlatform))
+        : [];
       setDevices(devicesNow);
+      setOtherDevices(otherNow);
       setSelected((current) => {
         if (!current) return current;
         return devicesNow.find((d) => d.adapter === current.adapter && d.device_id === current.device_id) ?? current;
@@ -866,13 +889,23 @@ export function MobileAcquisitionPage() {
       }
 
       const nextKey = devicesNow.map((d) => `${d.adapter}:${d.device_id}`).sort().join("|");
+      const otherKey = otherNow.map((d) => `${d.adapter}:${d.device_id}`).sort().join("|");
       const appeared = devicesNow.length > 0 && nextKey !== lastDeviceKeyRef.current;
+      const otherAppeared = otherNow.length > 0 && otherKey !== lastOtherDeviceKeyRef.current;
       lastDeviceKeyRef.current = nextKey;
+      lastOtherDeviceKeyRef.current = otherKey;
       if (appeared) {
         const kinds = [...new Set(devicesNow.map((d) => mobileKindLabel(d.os_family)))].join(", ");
         const first = devicesNow[0];
         const where = mobileAttachHostLabel(first.attach_host);
         toast.success(`${kinds} detected on ${where}${devicesNow.length > 1 ? ` (${devicesNow.length} devices)` : ""}.`);
+      } else if ((otherAppeared || !silent) && otherNow.length && !devicesNow.length) {
+        const first = otherNow[0];
+        const kind = mobileKindLabel(first.os_family);
+        const dest = otherAcquireLabel(first.os_family);
+        toast.success(
+          `${first.label || kind} is connected${otherNow.length > 1 ? ` (${otherNow.length} phones)` : ""}. Open ${dest} acquisition to collect it.`,
+        );
       } else if (!silent && !devicesNow.length) {
         toast.error(
           "No phone detected yet. Plug it in with a data cable on this PC or the office server. Unlock the screen — no extra adapter is required.",
@@ -2151,13 +2184,47 @@ export function MobileAcquisitionPage() {
           </div>
         )}
 
-        {devices.length === 0 ? (
+        {devices.length === 0 && otherDevices.length === 0 ? (
           <p className="text-sm text-ink-500">
             Watching for a phone on this PC and the office server. Plug it in with a data cable and
             unlock the screen — iPhone and Android are classified automatically. No extra adapter is
             required.
           </p>
         ) : (
+          <div className="grid gap-3">
+            {otherDevices.length > 0 && (
+              <div className="grid gap-2">
+                <p className="text-sm text-ink-600">
+                  {fixedPlatformLabel
+                    ? `A phone is connected, and it is not an ${fixedPlatformLabel} device. Open its own acquisition page so the evidence stays in the right backend.`
+                    : "A phone of another type is connected."}
+                </p>
+                {otherDevices.map((d) => {
+                  const kind = mobileKindLabel(d.os_family);
+                  const dest = otherAcquirePath(d.os_family);
+                  return (
+                    <button
+                      key={`other:${d.adapter}:${d.device_id}`}
+                      onClick={() => {
+                        if (dest) navigate(dest);
+                      }}
+                      className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left"
+                    >
+                      <Smartphone className="h-5 w-5 text-amber-700" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-ink-800">{d.label || d.device_id}</p>
+                        <p className="text-xs text-ink-500">
+                          {kind} · {mobileAttachHostLabel(d.attach_host)}
+                          {dest ? ` · Open ${otherAcquireLabel(d.os_family)} acquisition` : ""}
+                        </p>
+                      </div>
+                      <Badge tone="amber">{kind}</Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {devices.length > 0 && (
           <div className="grid gap-2 sm:grid-cols-2">
             {devices.map((d) => {
               const active = selected?.device_id === d.device_id && selected?.adapter === d.adapter;
@@ -2190,6 +2257,8 @@ export function MobileAcquisitionPage() {
                 </button>
               );
             })}
+            </div>
+            )}
           </div>
         )}
       </Card>

@@ -1,6 +1,6 @@
 # Shared infrastructure for every Aetheris product.
-# One Postgres, Redis, MinIO, pgAdmin, and MailHog. Products keep separate
-# databases, Redis logical DBs, and MinIO buckets.
+# One Postgres database (`forensic` on host port 5434), one Redis, MinIO,
+# pgAdmin, and MailHog. Products keep separate Redis logical DBs and MinIO buckets.
 #
 #   docker compose -f services/common/docker-compose.yml --project-directory . up -d
 name: aetheris-common

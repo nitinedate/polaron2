@@ -11,7 +11,7 @@ x-gpu: &gpu
 x-mobile-env: &mobile-env
   AETHERIS_SERVICE: mobile-android
   VULN_MODULE_ENABLED: "false"
-  DATABASE_URL: postgresql+psycopg2://android_forensic:android_forensic@postgres:5432/android_forensic
+  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
   REDIS_URL: redis://redis:6379/1
   # Shared leases only. Job state/evidence NEVER enters this Redis.
   RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-true}

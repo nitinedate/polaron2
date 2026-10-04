@@ -11,7 +11,7 @@ include:
 x-vuln-env: &vuln-env
   AETHERIS_SERVICE: vuln
   VULN_MODULE_ENABLED: "true"
-  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/vuln
+  DATABASE_URL: postgresql+psycopg2://forensic:forensic@postgres:5432/forensic
   REDIS_URL: redis://redis:6379/3
   DATA_ROOT: /app/data
   TMPDIR: /app/data/tmp

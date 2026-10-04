@@ -66,7 +66,9 @@ def test_compose_has_physical_data_and_queue_isolation():
     ienv = ios["x-mobile-env"]
     assert aenv["AETHERIS_SERVICE"] == "mobile-android"
     assert ienv["AETHERIS_SERVICE"] == "mobile-ios"
-    assert aenv["DATABASE_URL"] != ienv["DATABASE_URL"]
+    common_db = "postgresql+psycopg2://forensic:forensic@postgres:5432/forensic"
+    assert aenv["DATABASE_URL"] == common_db
+    assert ienv["DATABASE_URL"] == common_db
     assert aenv["REDIS_URL"] == "redis://redis:6379/1"
     assert ienv["REDIS_URL"] == "redis://redis:6379/2"
     assert "postgres" not in android["services"]
