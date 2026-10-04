@@ -114,6 +114,10 @@ def unload_glm_ocr() -> bool:
         return True
 
 IMAGE_EXT = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".gif", ".webp", ".heic"})
+# Office files are not added to the OCR queue. Text-only Word/Excel/PowerPoint
+# never reaches GLM. A file that does arrive is handled in cpu_prepare: pictures
+# only, and a document with no pictures is finished from its own text.
+OFFICE_EXT = frozenset({".doc", ".docx", ".docm", ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx"})
 DOCUMENT_EXT = frozenset({".pdf", *IMAGE_EXT})
 
 OCR_ELIGIBLE_EXT_SQL = """
@@ -683,6 +687,148 @@ def _ocr_image_bytes(data: bytes, *, path: str) -> tuple[str, float]:
     return "\n\n".join(texts), avg
 
 
+def _is_office_path(path: str) -> bool:
+    lower = str(path or "").lower()
+    return any(lower.endswith(ext) for ext in OFFICE_EXT)
+
+
+def _xml_text(blob: bytes) -> str:
+    import re
+
+    raw = blob.decode("utf-8", errors="ignore")
+    raw = re.sub(r"<[^>]+>", " ", raw)
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def _office_plain_text(data: bytes, path: str) -> str:
+    """Pull the already-digital text out of a Word, Excel, or PowerPoint file."""
+    lower = path.lower()
+    try:
+        import zipfile
+
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            chosen: list[str] = []
+            if lower.endswith((".docx", ".docm")):
+                chosen = [n for n in names if n == "word/document.xml" or n.startswith("word/header")]
+            elif lower.endswith((".xlsx", ".xlsm")):
+                chosen = [n for n in names if n.startswith("xl/sharedStrings") or n.startswith("xl/worksheets/")]
+            elif lower.endswith(".pptx"):
+                chosen = [n for n in names if n.startswith("ppt/slides/slide")]
+            parts = []
+            for name in chosen[:30]:
+                try:
+                    parts.append(_xml_text(zf.read(name)))
+                except Exception:
+                    continue
+            return "\n".join(p for p in parts if p)
+    except Exception:
+        return ""
+    return ""
+
+
+def _office_images(data: bytes) -> list:
+    """Raster pictures embedded in an Office file. Text-only files return none."""
+    from PIL import Image  # type: ignore
+
+    images = []
+    try:
+        import zipfile
+
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for name in zf.namelist():
+                lower = name.lower()
+                if not any(lower.startswith(prefix) for prefix in ("word/media/", "ppt/media/", "xl/media/")):
+                    continue
+                if lower.endswith("/"):
+                    continue
+                try:
+                    img = Image.open(io.BytesIO(zf.read(name))).convert("RGB")
+                except Exception:
+                    continue
+                images.append(img)
+    except Exception:
+        return []
+    return images
+
+
+def _prepare_office_ocr(data: bytes, *, path: str) -> dict:
+    """OCR only pictures inside Office files. Clear text with no pictures stays off the GPU."""
+    text = _office_plain_text(data, path)
+    images = _office_images(data)
+    settings = get_settings()
+    max_edge = int(getattr(settings, "ocr_max_image_edge", 1280) or 1280)
+    glm_segs = []
+    for img in images:
+        prepared = prepare_ocr_image(img, max_edge=max_edge)
+        if prepared is None or not _raster_needs_actual_ocr(prepared):
+            continue
+        glm_segs.append(
+            {"type": "image", "image": prepared, "prompt": _ocr_prompt_for_path(path)}
+        )
+    if not glm_segs:
+        if _digital_text_usable(text):
+            return {
+                "status": "cpu_done",
+                "path": path,
+                "text": text,
+                "conf": 0.90,
+                "engine": "office-text",
+                "segments": [],
+            }
+        return {
+            "status": "skip",
+            "path": path,
+            "text": "",
+            "conf": 0.0,
+            "engine": "office-no-image",
+            "segments": [],
+        }
+    segments = ([{"type": "text", "text": text}] if _digital_text_usable(text) else []) + glm_segs
+    return {
+        "status": "needs_gpu",
+        "path": path,
+        "text": "",
+        "conf": 0.0,
+        "engine": "glm-ocr",
+        "segments": segments,
+    }
+
+
+def _pdf_page_has_images(page) -> bool:
+    try:
+        if page.get_images():
+            return True
+    except Exception:
+        pass
+    try:
+        info = page.get_text("dict") or {}
+        for block in info.get("blocks") or []:
+            if block.get("type") == 1:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _pdf_bytes_have_images(data: bytes) -> bool:
+    try:
+        import fitz  # type: ignore
+
+        with _fitz_lock:
+            doc = fitz.open(stream=data, filetype="pdf")
+            try:
+                limit = min(len(doc), 12)
+                for i in range(limit):
+                    if _pdf_page_has_images(doc[i]):
+                        return True
+            finally:
+                doc.close()
+    except Exception:
+        return False
+    return False
+
+
 def _digital_text_usable(text: str | None) -> bool:
     """True when a PDF already has extractable digital text — skip GLM."""
     t = (text or "").strip()
@@ -736,9 +882,12 @@ def cpu_prepare_ocr_item(
     if not allow_photos and is_photo_like_path(path):
         return {"status": "skip", "path": path, "text": "", "conf": 0.0, "engine": "photo", "segments": []}
     lower = path.lower()
+    if _is_office_path(lower):
+        return _prepare_office_ocr(data, path=path)
     if lower.endswith(".pdf"):
         text, conf = _extract_pdf_text_layer(data)
-        if _digital_text_usable(text):
+        # Clear digital text and no pictures: nothing for GLM to read.
+        if _digital_text_usable(text) and not _pdf_bytes_have_images(data):
             return {
                 "status": "cpu_done",
                 "path": path,
@@ -828,8 +977,14 @@ def _cpu_pdf_segments(data: bytes, *, path: str, max_pages: int | None = None) -
                 for page_num in range(min(len(doc), page_limit)):
                     page = doc[page_num]
                     native = (page.get_text("text") or "").strip()
-                    if native:
+                    # Clear text stays as text. A page with no embedded image is
+                    # not scanned, so rendering it for GLM only burns the GPU.
+                    if _digital_text_usable(native):
                         segments.append({"type": "text", "text": native})
+                        continue
+                    if not _pdf_page_has_images(page):
+                        if native:
+                            segments.append({"type": "text", "text": native})
                         continue
                     pix = page.get_pixmap(dpi=110)
                     img_bytes = pix.tobytes("png")
@@ -931,9 +1086,11 @@ def _ocr_pdf_pages(data: bytes, *, path: str, max_pages: int | None = None) -> t
         for page_num in range(min(len(doc), page_limit)):
             thermal_guard_before_batch(reason=f"glm_ocr_pdf_p{page_num + 1}")
             page = doc[page_num]
-            if page.get_text("text").strip():
-                all_text.append(page.get_text("text").strip())
-                confidences.append(0.90)
+            native = (page.get_text("text") or "").strip()
+            if _digital_text_usable(native) or not _pdf_page_has_images(page):
+                if native:
+                    all_text.append(native)
+                    confidences.append(0.90)
                 thermal_guard_after_batch(reason="glm_ocr_pdf_text")
                 continue
             pix = page.get_pixmap(dpi=110)

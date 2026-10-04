@@ -216,6 +216,94 @@ def test_cpu_prepare_text_layer_pdf_skips_gpu(monkeypatch) -> None:
     assert prep["segments"] == []
 
 
+def test_office_without_images_stays_off_gpu() -> None:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "word/document.xml",
+            "<w:document><w:t>Invoice 12345 paid in full today</w:t></w:document>",
+        )
+    prep = ocr_gpu.cpu_prepare_ocr_item(buf.getvalue(), path="Users/a/Documents/invoice.docx")
+    assert prep["status"] == "cpu_done"
+    assert prep["engine"] == "office-text"
+    assert prep["segments"] == []
+    assert "Invoice 12345" in prep["text"]
+
+
+def test_office_with_embedded_image_still_needs_gpu() -> None:
+    import io
+    import zipfile
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (400, 520), "white")
+    draw = ImageDraw.Draw(img)
+    for y in range(36, 500, 16):
+        draw.rectangle((28, y, 372, y + 7), fill=(20, 20, 20))
+    raw = io.BytesIO()
+    img.save(raw, format="PNG")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "word/document.xml",
+            "<w:document><w:t>See the attached scan of the signed contract</w:t></w:document>",
+        )
+        zf.writestr("word/media/image1.png", raw.getvalue())
+    prep = ocr_gpu.cpu_prepare_ocr_item(buf.getvalue(), path="Users/a/Documents/signed.docx")
+    assert prep["status"] == "needs_gpu"
+    assert any(seg.get("type") == "image" for seg in prep["segments"])
+
+
+def test_office_with_no_text_and_no_images_is_skipped() -> None:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("word/document.xml", "<w:document></w:document>")
+    prep = ocr_gpu.cpu_prepare_ocr_item(buf.getvalue(), path="Users/a/Documents/empty.docx")
+    assert prep["status"] == "skip"
+    assert prep["engine"] == "office-no-image"
+
+
+def test_text_pdf_without_images_skips_gpu() -> None:
+    fitz = __import__("fitz")
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Invoice 12345 paid in full")
+    data = doc.tobytes()
+    doc.close()
+    prep = ocr_gpu.cpu_prepare_ocr_item(data, path="Users/a/Documents/letter.pdf")
+    assert prep["status"] == "cpu_done"
+    assert prep["engine"] in ("pypdf", "pymupdf-text")
+    assert not any(seg.get("type") == "image" for seg in prep["segments"])
+
+
+def test_scan_pdf_page_still_needs_gpu() -> None:
+    import io
+
+    fitz = __import__("fitz")
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (400, 520), "white")
+    draw = ImageDraw.Draw(img)
+    for y in range(36, 500, 16):
+        draw.rectangle((28, y, 372, y + 7), fill=(20, 20, 20))
+    raw = io.BytesIO()
+    img.save(raw, format="PNG")
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_image(fitz.Rect(72, 72, 400, 520), stream=raw.getvalue())
+    data = doc.tobytes()
+    doc.close()
+    prep = ocr_gpu.cpu_prepare_ocr_item(data, path="Users/a/Documents/scan.pdf")
+    assert prep["status"] == "needs_gpu"
+    assert any(seg.get("type") == "image" for seg in prep["segments"])
+
+
 def test_cpu_prepare_skips_blank_image() -> None:
     import io
 
