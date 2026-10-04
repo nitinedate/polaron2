@@ -263,6 +263,21 @@ def scan_job_progress(db, job: dict[str, Any]) -> dict[str, Any]:
     """Derive UI progress from job status and per-engine run rows."""
     status = (job.get("status") or "pending").lower()
     if status == "completed":
+        # V45.4a: completed edge jobs say which agent build ran and whether any host is incomplete.
+        try:
+            orch_done = _orch_dict(job)
+        except Exception:
+            orch_done = {}
+        if orch_done.get("edge_agent"):
+            parts = ["Complete"]
+            degraded = orch_done.get("degraded_hosts") or []
+            if degraded:
+                parts[0] = f"Complete - {len(degraded)} host(s) incomplete"
+            ver = orch_done.get("edge_agent_version")
+            build = orch_done.get("edge_agent_build")
+            if ver:
+                parts.append(f"agent {ver}" + (f" - {build}" if build and build.startswith("legacy") else ""))
+            return {"progress_pct": 100, "progress_label": " · ".join(parts)[:120]}
         return {"progress_pct": 100, "progress_label": "Complete"}
     if status == "failed":
         return {"progress_pct": 100, "progress_label": "Failed"}

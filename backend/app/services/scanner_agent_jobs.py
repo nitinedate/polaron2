@@ -730,6 +730,18 @@ def update_job_progress(
     orch["edge_progress"] = progress
     orch["edge_agent"] = True
     orch["enabled"] = False
+    # V45.4a: record which agent build produced this result (from its last heartbeat).
+    try:
+        ver_row = fetchone(
+            db, "SELECT version FROM vuln_scanners WHERE id = CAST(:sid AS uuid)", {"sid": scanner_id}
+        )
+        agent_ver = str((ver_row or {}).get("version") or "").strip()
+        orch["edge_agent_version"] = agent_ver or None
+        orch["edge_agent_build"] = (
+            "v45.4" if "v45" in agent_ver else ("legacy (pre-V45.4)" if agent_ver else "unknown")
+        )
+    except Exception:
+        orch["edge_agent_version"] = None
     if _normalize_agent_instance(agent_instance_id):
         orch["edge_owner_instance"] = _normalize_agent_instance(agent_instance_id)
         orch["edge_owner_seen_at"] = datetime.now(timezone.utc).isoformat()

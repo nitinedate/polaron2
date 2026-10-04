@@ -3,6 +3,9 @@ setlocal
 cd /d "%~dp0"
 echo === V45.4 deployment check (laptop scanner) ===
 echo.
+echo [0] Host folder bound into the running agent (THIS is the folder that must contain the V45 files):
+docker inspect aetheris-laptop-scanner-agent-1 --format "{{range .Mounts}}{{.Source}}  =^>  {{.Destination}}{{println}}{{end}}" 2>nul
+echo.
 echo [1] openvas.conf inside the scanner (expect plugins_timeout = 320, scanner_plugins_timeout = 36000):
 docker compose exec -T openvas cat /etc/openvas/openvas.conf
 echo.
