@@ -260,6 +260,20 @@ def family_where_sql(family: str) -> tuple[str, dict]:
         return f" AND {_WA_CALLS_SQL} AND {_WA_EXCLUDE_SQL}", {}
     if key == "whatsapp_media":
         return f" AND {_WA_MEDIA_SQL} AND {_WA_EXCLUDE_SQL} AND NOT {_TRASH_SQL}", {}
+    if key == "whatsapp_encrypted_backups":
+        # Chat backups only. Payment-theme and sticker *.webp.crypt14 files are not msgstore.
+        return """ AND (
+          (
+            lower(file_name) LIKE '%msgstore%'
+            OR lower(replace(file_path,'\\\\','/')) LIKE '%/databases/msgstore%'
+          )
+          AND (
+            lower(file_name) LIKE '%.crypt%'
+            OR lower(replace(file_path,'\\\\','/')) LIKE '%.crypt%'
+            OR lower(file_name) LIKE '%.enc'
+            OR lower(replace(file_path,'\\\\','/')) LIKE '%.sqlite.enc'
+          )
+        )""", {}
     if key.startswith("whatsapp"):
         return f" AND ({_WA_PLAIN_DB_SQL} OR {_WA_MEDIA_SQL}) AND {_WA_EXCLUDE_SQL}", {}
 
@@ -603,10 +617,12 @@ def no_chat_data_notice(family: str, job_id: str) -> dict[str, Any]:
         }
     if key == "whatsapp_deleted_messages":
         body = (
-            "No recovered/deleted WhatsApp message residuals were found yet.\n\n"
-            "Deleted rows come from SQLite freelist/WAL carving of ChatStorage.sqlite / "
-            "msgstore.db (not from carved_deleted_residuals.json dumps).\n"
-            "Re-run mobile inventory if carving has not completed."
+            "No recovered/deleted WhatsApp message text was found.\n\n"
+            "Deleted rows come from SQLite freelist/WAL carving of a plaintext "
+            "ChatStorage.sqlite or msgstore.db. Encrypted msgstore.crypt14 backups "
+            "are not deleted messages, and they cannot be carved until the device key "
+            "is in the acquisition.\n"
+            "Open WhatsApp Encrypted Backups to see the crypt files that were collected."
         )
         return {
             "id": f"ev-notice-{key}",
@@ -627,8 +643,16 @@ def no_chat_data_notice(family: str, job_id: str) -> dict[str, Any]:
         "instagram": "Instagram Direct databases under com.instagram.android/databases",
         "telegram": "Telegram cache4.db under org.telegram.messenger/databases",
         "signal": "Signal databases under org.thoughtcrime.securesms/databases",
-        "whatsapp_messages": "WhatsApp msgstore.db under com.whatsapp/databases",
-        "whatsapp_chats": "WhatsApp msgstore.db under com.whatsapp/databases",
+        "whatsapp_messages": (
+            "plaintext msgstore.db / ChatStorage.sqlite. This Android pull has the "
+            "encrypted msgstore.crypt14 backups instead. Those open under "
+            "WhatsApp Encrypted Backups and stay unreadable without "
+            "/data/data/com.whatsapp/files/key (about 158 bytes). An adb run-as "
+            "error saved as a key file cannot decrypt them"
+        ),
+        "whatsapp_chats": (
+            "plaintext msgstore.db / ChatStorage.sqlite under com.whatsapp/databases"
+        ),
     }
     need = hints.get(key, "the app's private SQLite databases under /data/data/.../databases/")
     body = (

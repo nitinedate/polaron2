@@ -28,7 +28,7 @@ COPY requirements.txt .
 
 # Install CUDA-enabled PyTorch first.  Compose can override TORCH_INDEX_URL for
 # a driver/toolkit validated wheel channel. Requirements then reuse that torch.
-ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip --retries 20 \
     && python -m pip install --retries 20 --index-url "${TORCH_INDEX_URL}" torch torchvision \

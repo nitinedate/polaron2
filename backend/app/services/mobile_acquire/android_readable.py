@@ -135,7 +135,9 @@ def _carve_android_msgstore(msgstore: Path, dest: Path, out: dict[str, Any]) -> 
 
 def _looks_like_whatsapp_key(rel: str, name: str, size: int) -> bool:
     low = rel.replace("\\", "/").lower()
-    if size < 32 or size > 512:
+    # Real device key is ~158 bytes (AES key at offset 30). A 32-byte raw AES
+    # key is also valid. adb run-as errors land in between and are not keys.
+    if size != 32 and not (62 <= size <= 512):
         return False
     if name.lower() != "key":
         return False

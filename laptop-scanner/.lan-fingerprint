@@ -1,1 +1,1 @@
-{"gateway":"","subnet":"","source":"placeholder"}
+{"subnet":"192.168.0.0/24","updated_at":"2026-10-03T12:31:34.1718450Z","source":"host","gateway":"192.168.0.1"}

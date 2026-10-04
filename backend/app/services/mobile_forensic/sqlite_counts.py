@@ -193,6 +193,91 @@ def discover_whatsapp_key_hex(db, job_id: str) -> str | None:
     return None
 
 
+def whatsapp_key_gap_text(
+    *,
+    backup_count: int,
+    key_size: int | None = None,
+    key_head: bytes | None = None,
+    empty_android_backup: bool = False,
+) -> str:
+    """Examiner-facing reason chats are still inside msgstore crypt files."""
+    n = max(int(backup_count or 0), 0)
+    head = bytes(key_head or b"")[:16]
+    parts = [
+        f"No plaintext chat rows yet — {n:,} encrypted msgstore backup(s) collected."
+    ]
+    if head.lower().startswith(b"run-as"):
+        size_bit = f"{int(key_size)}-byte " if key_size else ""
+        parts.append(
+            f"The only key file in this acquisition is a {size_bit}adb \"run-as\" error, "
+            "not the WhatsApp device key at /data/data/com.whatsapp/files/key "
+            "(typically 158 bytes)."
+        )
+    elif key_size and key_size < 62:
+        parts.append(
+            f"A {int(key_size)}-byte file named key was collected, which is too small to be "
+            "the WhatsApp device key at /data/data/com.whatsapp/files/key "
+            "(typically 158 bytes)."
+        )
+    else:
+        parts.append(
+            "The device key (/data/data/com.whatsapp/files/key) was not in this acquisition."
+        )
+    if empty_android_backup:
+        parts.append("The WhatsApp Android backup (whatsapp.ab) is empty.")
+    parts.append(
+        "Chats stay inside those crypt files until a rooted or full-filesystem image "
+        "includes that key. Theme and sticker .crypt14 files are not chat backups."
+    )
+    return " ".join(parts)
+
+
+def describe_whatsapp_key_gap(db, job_id: str, *, backup_count: int) -> str:
+    """Read the collected key/backup stubs and explain why chats were not decrypted."""
+    rows = fetchall(
+        db,
+        """SELECT file_name, file_path, size_bytes, metadata
+           FROM job_artifacts
+           WHERE job_id=:jid
+             AND (
+               lower(file_name) = 'key'
+               OR lower(file_name) LIKE '%.ab'
+             )
+             AND lower(replace(file_path, '\\', '/')) LIKE '%whatsapp%'
+           LIMIT 20""",
+        {"jid": job_id},
+    )
+    key_size: int | None = None
+    key_head = b""
+    empty_ab = False
+    for row in rows or []:
+        name = str(row.get("file_name") or "").lower()
+        size = int(row.get("size_bytes") or 0)
+        meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        if isinstance(row.get("metadata"), str):
+            try:
+                meta = json.loads(row["metadata"])
+            except Exception:
+                meta = {}
+        if name == "key":
+            magic = str((meta or {}).get("magic_hex") or "")
+            try:
+                head = bytes.fromhex(magic) if magic else b""
+            except ValueError:
+                head = b""
+            if key_size is None or size < (key_size or 0) or head.lower().startswith(b"run-as"):
+                key_size = size
+                key_head = head
+        if name.endswith(".ab") and size <= 0:
+            empty_ab = True
+    return whatsapp_key_gap_text(
+        backup_count=backup_count,
+        key_size=key_size,
+        key_head=key_head,
+        empty_android_backup=empty_ab,
+    )
+
+
 def _is_sms_db(path: str) -> bool:
     p = _norm_path(path)
     name = PurePosixPath(p).name
@@ -900,10 +985,9 @@ def collect_mobile_sqlite_inventory(db, job_id: str) -> dict[str, Any]:
             )
         else:
             result["limitations"].append(
-                f"Found {result['whatsapp_encrypted_backups']} WhatsApp msgstore encrypted "
-                "backup(s) (msgstore*.crypt12/14/15). Chats are inside those files. The "
-                "device key (/data/data/com.whatsapp/files/key) was not in this acquisition — "
-                "reconnect the phone with USB debugging, or import a rooted/UFED FFS image."
+                describe_whatsapp_key_gap(
+                    db, job_id, backup_count=int(result["whatsapp_encrypted_backups"] or 0)
+                )
             )
     if not result["whatsapp_db_paths"] and result["whatsapp_messages"] == 0:
         result["limitations"].append(

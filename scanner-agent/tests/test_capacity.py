@@ -1,4 +1,4 @@
-"""Laptop IP fan-out has a five-worker operational floor."""
+"""Throughput-aware capacity planning for the 15-18 IP/hour scanner profile."""
 
 from unittest.mock import patch
 
@@ -7,26 +7,38 @@ from agent.capacity import (
     chunk_targets,
     ip_workers_for_cpu,
     probe_laptop_capacity,
+    projected_hosts_per_hour,
+    required_workers_for_slo,
 )
 
 
-def test_ip_workers_scale_from_five_upward(monkeypatch):
-    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '10')
-    assert ip_workers_for_cpu(1, explicit='auto') == 5
-    assert ip_workers_for_cpu(4, explicit='auto') == 5
-    assert ip_workers_for_cpu(8, explicit='auto') == 6
-    assert ip_workers_for_cpu(12, explicit='auto') == 8
-    assert ip_workers_for_cpu(16, explicit='auto') == 10
+def test_slo_requires_six_workers_at_18_hph_and_20_minutes(monkeypatch):
+    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '6')
+    monkeypatch.setenv('SCAN_SLO_HOSTS_PER_HOUR', '18')
+    monkeypatch.setenv('SCAN_EXPECTED_HOST_MINUTES', '20')
+    assert required_workers_for_slo() == 6
+    assert projected_hosts_per_hour(6) == 18.0
 
 
-def test_explicit_value_cannot_drop_below_five(monkeypatch):
-    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '10')
-    assert ip_workers_for_cpu(16, explicit='2') == 5
+def test_auto_workers_fit_cpu_envelope(monkeypatch):
+    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '6')
+    monkeypatch.setenv('SCAN_SLO_HOSTS_PER_HOUR', '18')
+    monkeypatch.setenv('SCAN_EXPECTED_HOST_MINUTES', '20')
+    assert ip_workers_for_cpu(2, explicit='auto') == 4
+    assert ip_workers_for_cpu(4, explicit='auto') == 4
+    assert ip_workers_for_cpu(8, explicit='auto') == 5
+    assert ip_workers_for_cpu(12, explicit='auto') == 6
+    assert ip_workers_for_cpu(16, explicit='auto') == 6
+
+
+def test_explicit_value_respects_safe_floor_and_ceiling(monkeypatch):
+    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '6')
+    assert ip_workers_for_cpu(16, explicit='2') == 4
     assert ip_workers_for_cpu(16, explicit='5') == 5
-    assert ip_workers_for_cpu(16, explicit='8') == 8
+    assert ip_workers_for_cpu(16, explicit='9') == 6
 
 
-def test_chunks_are_one_ip_each():
+def test_chunks_remain_one_ip_each():
     chunks = chunk_targets(['10.0.0.1', '10.0.0.2', '10.0.0.3'], 1)
     assert chunks == [['10.0.0.1'], ['10.0.0.2'], ['10.0.0.3']]
 
@@ -42,34 +54,30 @@ def _probe_with(*, temp=55.0, cpu_pct=30.0, load=1.0, mem=8.0):
         return probe_laptop_capacity(force=True)
 
 
-def test_cool_host_scales_above_floor(monkeypatch):
-    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '10')
+def test_cool_host_targets_18_per_hour(monkeypatch):
+    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '6')
+    monkeypatch.setenv('SCAN_SLO_HOSTS_PER_HOUR', '18')
+    monkeypatch.setenv('SCAN_EXPECTED_HOST_MINUTES', '20')
     plan = _probe_with()
     assert plan['thermal_state'] == 'cool'
-    assert plan['semaphore_limit'] == 8
-    assert plan['semaphore_limit'] >= IP_WORKERS_MIN
-    assert plan['admission_paused'] is False
+    assert plan['ip_workers'] == 6
+    assert plan['projected_hosts_per_hour'] == 18.0
+    assert plan['slo_at_risk'] is False
 
 
-def test_hot_host_keeps_five_worker_floor(monkeypatch):
-    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '10')
+def test_hot_host_reduces_admission_without_killing_existing(monkeypatch):
+    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '6')
     plan = _probe_with(temp=86.0)
     assert plan['thermal_state'] == 'hot'
-    assert plan['ip_workers'] == 5
+    assert plan['ip_workers'] == IP_WORKERS_MIN
     assert plan['max_concurrent_jobs'] == 1
     assert plan['admission_paused'] is False
 
 
-def test_critical_host_pauses_new_admission_not_floor(monkeypatch):
-    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '10')
+def test_critical_host_pauses_new_admission(monkeypatch):
+    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '6')
     plan = _probe_with(temp=94.0)
     assert plan['thermal_state'] == 'critical'
-    assert plan['semaphore_limit'] == 5
+    assert plan['semaphore_limit'] == IP_WORKERS_MIN
     assert plan['max_concurrent_jobs'] == 1
     assert plan['admission_paused'] is True
-
-
-def test_high_load_uses_floor_or_pause(monkeypatch):
-    monkeypatch.setenv('SCAN_IP_MAX_PARALLELISM', '10')
-    plan = _probe_with(load=15.0)
-    assert plan['ip_workers'] >= 5

@@ -49,6 +49,20 @@ def _prepare_cuda_for_ocr_load() -> None:
         unload_embedder()
     except Exception as exc:
         log.debug("embedder unload before OCR load: %s", exc)
+    # V45: on a single 12 GB card a resident 14B Ollama model (~9 GB) leaves no
+    # room for GLM-OCR at OCR_CUDA_MEMORY_FRACTION. RAG already evicts Ollama
+    # (GPU_THERMAL_UNLOAD_OLLAMA_BEFORE_RAG); OCR must do the same.
+    try:
+        import os as _os
+
+        if (_os.environ.get("GPU_THERMAL_UNLOAD_OLLAMA_BEFORE_OCR") or "true").strip().lower() in {"1", "true", "yes", "on"}:
+            from app.services.model_router import ollama_unload_all_models
+
+            unloaded = ollama_unload_all_models()
+            if unloaded:
+                log.info("Unloaded Ollama models before GLM-OCR load: %s", unloaded)
+    except Exception as exc:
+        log.debug("ollama unload before OCR load skipped: %s", exc)
     try:
         import gc
         import os
@@ -1141,10 +1155,25 @@ def _ocr_cpu_worker_count(*, gpu: bool, n_items: int, num_buckets: int = 1) -> i
 
 
 def open_ocr_cpu_pool(workers: int):
-    """CPU text-layer pool. Celery prefork workers cannot spawn processes."""
+    """CPU text-layer pool. Celery prefork workers cannot spawn processes.
+
+    Spawning a process after ``torch.cuda.is_available()`` has already created a
+    CUDA context deadlocks on this host (the pool never starts, so GLM never
+    runs and the OCR card stays put). Threads share the process and stay safe.
+    """
     n = max(1, int(workers or 1))
-    if multiprocessing.current_process().daemon:
-        log.info("OCR CPU pool — %s thread(s) (celery prefork cannot spawn processes)", n)
+    cuda_ready = False
+    try:
+        import torch
+
+        cuda_ready = bool(torch.cuda.is_initialized())
+    except Exception:
+        cuda_ready = False
+    if multiprocessing.current_process().daemon or cuda_ready:
+        log.info(
+            "OCR CPU pool — %s thread(s) (CUDA context or prefork worker)",
+            n,
+        )
         return ThreadPoolExecutor(max_workers=n, thread_name_prefix="ocr-cpu")
     try:
         ctx = multiprocessing.get_context("spawn")
@@ -1788,6 +1817,12 @@ def run_ocr_for_job(
         work_rows.append(dict(row))
 
     payloads: list[dict] = []
+    preload = getattr(read_file_fn, "preload", None)
+    if callable(preload) and work_rows:
+        try:
+            preload([str(r.get("file_path") or "") for r in work_rows])
+        except Exception as exc:
+            log.warning("OCR batch file read failed: %s", exc)
     for r in work_rows:
         path = str(r.get("file_path") or "")
         try:

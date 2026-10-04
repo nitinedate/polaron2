@@ -22,4 +22,4 @@ def test_port_range_without_control_plane_uses_probe(monkeypatch):
 
     monkeypatch.setattr(cp, "control_plane_ports_for_hosts", lambda hosts: {8080})
     out = port_range_without_control_plane("T:80,8080,8443", ["192.168.0.163"])
-    assert out == "T:80,8443"
+    assert out == "T:80,T:8443"

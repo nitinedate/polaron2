@@ -542,6 +542,73 @@ def open_virtual_disk(
     return vd
 
 
+def open_virtual_disk_from_paths(
+    job_id: str,
+    paths: list[str],
+    *,
+    hashes: list[str] | None = None,
+    base_name: str = "",
+    fmt: str = "",
+    root_folder: str | None = None,
+) -> VirtualDisk:
+    """V45: open a VirtualDisk from an already-resolved plan — no DB session.
+
+    Shard threads use this so they never compete for the Celery worker's tiny
+    Postgres pool. Mirrors ``open_virtual_disk`` after path resolution.
+    """
+    if not paths:
+        raise ValueError("no segment paths")
+    path_objs = [_resolve_evidence_path(p) for p in paths]
+    missing = [str(p) for p in path_objs if not p.exists()]
+    if missing:
+        raise ValueError(f"Evidence path(s) not accessible in this worker: {missing[0]}")
+    first = path_objs[0]
+    resolved = [str(p) for p in path_objs]
+    hashes = list(hashes or [])
+    if root_folder or first.is_dir():
+        return VirtualDisk(
+            job_id=job_id,
+            mode="folder",
+            segment_paths=resolved,
+            segment_hashes=hashes,
+            base_name=base_name or first.name,
+            format=fmt or "backup",
+            root_folder=root_folder or str(first),
+        )
+    vd = VirtualDisk(
+        job_id=job_id,
+        mode="folder",
+        segment_paths=resolved,
+        segment_hashes=hashes,
+        base_name=base_name or first.stem,
+        format=fmt or (first.suffix.lstrip(".").lower() or "raw"),
+    )
+    if any(_is_ewf_segment(p) or p.suffix.lower() in (".dd", ".raw", ".vmdk", ".vhdx") for p in path_objs):
+        img, mode = _open_img_info(path_objs)
+        if img and _pytsk3 and mode != "folder":
+            vd.mode = mode
+            vd._img_info = img
+            fs = _open_filesystem(img)
+            if fs:
+                vd._fs_info = fs
+                return vd
+    vd.mode = "folder"
+    vd.root_folder = str(first.parent)
+    return vd
+
+
+def vd_plan(vd: VirtualDisk) -> dict:
+    """Serializable description a shard can reopen the disk from (V45)."""
+    return {
+        "segment_paths": list(vd.segment_paths),
+        "segment_hashes": list(vd.segment_hashes),
+        "base_name": vd.base_name,
+        "format": vd.format,
+        "root_folder": vd.root_folder,
+        "mode": vd.mode,
+    }
+
+
 _VD_CACHE: dict[str, tuple[VirtualDisk, float]] = {}
 _VD_CACHE_LOCK = threading.Lock()
 _VD_CACHE_TTL_SEC = 600.0

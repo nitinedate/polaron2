@@ -26,6 +26,15 @@ def test_whatsapp_filter_prefers_chat_dbs_not_apk():
     assert evidence_browse_mode("Contacts") == "contact"
 
 
+def test_encrypted_whatsapp_backups_list_msgstore_crypt_not_media():
+    sql, params = family_where_sql("whatsapp_encrypted_backups")
+    assert "msgstore" in sql.lower()
+    assert ".crypt" in sql.lower()
+    assert "webp" not in sql.lower()
+    assert params == {}
+    assert evidence_browse_mode("WhatsApp Encrypted Backups") is None
+
+
 def test_empty_family():
     sql, params = family_where_sql("")
     assert sql == ""

@@ -158,12 +158,12 @@ def test_vulnerability_parser_preserves_qod():
     assert rows[0]["source_result_id"] == "greenbone-result-1"
 
 
-def test_canonical_severity_never_downgrades_cvss_or_scanner_label():
+def test_canonical_severity_uses_nessus_cvss_bands_only():
     from agent.gmp_local import _canonical_severity
 
     assert _canonical_severity("Info", 9.8) == "critical"
     assert _canonical_severity("High", 9.8) == "critical"
-    assert _canonical_severity("Critical", 5.0) == "critical"
+    assert _canonical_severity("Critical", 5.0) == "medium"
     assert _canonical_severity("Medium", 7.5) == "high"
 
 
@@ -326,7 +326,7 @@ def test_start_scan_never_silently_downgrades_to_bare_task(monkeypatch):
     assert len(fake.calls) == 2
     assert "preferences" in fake.calls[0]
     assert "thorough_tests" not in fake.calls[0]["preferences"]
-    assert fake.calls[0]["preferences"]["checks_read_timeout"] == "8"
-    assert fake.calls[0]["preferences"]["timeout_retry"] == "1"
-    assert fake.calls[0]["preferences"]["open_sock_max_attempts"] == "2"
+    assert fake.calls[0]["preferences"]["checks_read_timeout"] == "10"
+    assert fake.calls[0]["preferences"]["timeout_retry"] == "3"
+    assert fake.calls[0]["preferences"]["open_sock_max_attempts"] == "5"
     assert "preferences" in fake.calls[1]

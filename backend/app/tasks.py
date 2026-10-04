@@ -1315,7 +1315,7 @@ def _ocr_drain_locked(
         skip_ocr_noise_pending,
         write_ocr_live_progress,
     )
-    from app.services.tar_cache import read_file_from_part
+    from app.services.tar_cache import iter_files_from_part, read_file_from_part
     from app.db.sql_helpers import execute, fetchone
     import json
 
@@ -1432,8 +1432,41 @@ def _ocr_drain_locked(
             manifest = json.loads(manifest)
         index_map = build_index_map(manifest or {})
 
+        # One streaming pass per shard for the whole batch. Reading each file
+        # alone restarts a multi-GB tar from the beginning and the OCR card
+        # sits still for the entire scan.
+        part_bytes: dict[str, bytes | None] = {}
+
+        def preload_part_bytes(paths: list[str]) -> None:
+            groups: dict[str, set[str]] = {}
+            for raw in paths:
+                norm = str(raw or "").replace("\\", "/")
+                if not norm or norm in part_bytes:
+                    continue
+                uri = index_map.get(norm) or index_map.get(raw)
+                if not uri:
+                    continue
+                groups.setdefault(str(uri), set()).add(norm)
+            if groups:
+                nfiles = sum(len(v) for v in groups.values())
+                write_disk_log(
+                    db,
+                    job_id,
+                    f"OCR reading {nfiles} file(s) from the extract in one pass",
+                    stage="ocr",
+                )
+                db.commit()
+            for uri, wanted in groups.items():
+                for norm, content in iter_files_from_part(uri, wanted):
+                    part_bytes[norm] = content
+
         def read_fn(path: str) -> bytes | None:
-            part_uri = index_map.get(path.replace("\\", "/")) or index_map.get(path)
+            norm = path.replace("\\", "/")
+            if norm in part_bytes:
+                data = part_bytes[norm]
+                if data is not None:
+                    return data
+            part_uri = index_map.get(norm) or index_map.get(path)
             if part_uri:
                 data = read_file_from_part(part_uri, path)
                 if data is not None:
@@ -1464,6 +1497,8 @@ def _ocr_drain_locked(
             except Exception:
                 pass
             return None
+
+        read_fn.preload = preload_part_bytes  # type: ignore[attr-defined]
 
         total_done = 0
         last_deferred = False

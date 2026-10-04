@@ -472,6 +472,7 @@ _WHATSAPP_NON_MESSAGE_NAMES = frozenset({
     "whatsapp calls",
     "whatsapp groups",
     "whatsapp media",
+    "whatsapp encrypted backups",
     "whatsapp",
 })
 

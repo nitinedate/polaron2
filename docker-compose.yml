@@ -42,10 +42,14 @@ x-worker-env: &worker-env
   RESOURCE_GOVERNOR_CPU_MAX_SLOTS: ${RESOURCE_GOVERNOR_CPU_MAX_SLOTS:-10}
   RESOURCE_GOVERNOR_GPU_MAX_SLOTS: ${RESOURCE_GOVERNOR_GPU_MAX_SLOTS:-4}
   GPU_RELEASE_MODEL_AFTER_TASK: ${GPU_RELEASE_MODEL_AFTER_TASK:-true}
-  # Small per-process pools prevent Celery prefork children from exhausting Postgres.
-  DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-2}
-  DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-2}
-  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+  # V45: one extraction task runs main + flusher + stop-poller + heartbeat sessions.
+  # The old 2+2 pool was fully consumed by those four, so the first shard thread that
+  # needed a connection died with "QueuePool limit of size 2 overflow 2 reached".
+  # Shard threads are now DB-free (extract_shard_v45); 4+8 leaves headroom for
+  # phase-3 hand-offs. Budget: worker-disk 8 x 12 + worker-parse 6 x 12 < max_connections=200.
+  DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-4}
+  DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-8}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-90}
   MINIO_ENDPOINT: minio:9000
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -458,6 +462,11 @@ services:
       - type: bind
         source: ${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/uploads
         target: /app/data/uploads
+      # V45: scratch for shard spool/parts. Point EXTRACT_SCRATCH_HOST_DIR at an NVMe/SSD
+      # folder when the evidence drive is a USB HDD so reads and temp writes never share spindles.
+      - type: bind
+        source: ${EXTRACT_SCRATCH_HOST_DIR:-${AETHERIS_BACKUP_DIR:-./backup}/forensic-data/scratch}
+        target: /scratch
     depends_on:
       api:
         condition: service_healthy

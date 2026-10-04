@@ -143,6 +143,17 @@ def test_whatsapp_crypt_without_key_is_unverified(tmp_path: Path):
     assert arts[0].data.get("key_available") is False
 
 
+def test_theme_crypt14_is_not_a_chat_backup(tmp_path: Path):
+    item = InventoryItem(
+        path="WhatsApp/Backups/006_travel_theme.webp.crypt14",
+        size=40,
+        extension=".crypt14",
+    )
+    ctx = ParseContext(job_id="job-1", platform="Android", whatsapp_key_hex=None)
+    assert WhatsAppParser().supports(item, ctx) is False
+    assert list(WhatsAppParser().parse(item, ctx)) == []
+
+
 def test_recovery_not_auto_promoted():
     """Recovered candidates start pending_review; allocated accepted."""
     live = NormalizedArtifact.create(

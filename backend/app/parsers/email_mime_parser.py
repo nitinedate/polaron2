@@ -259,8 +259,16 @@ def _is_downloadable_part(part: Any) -> bool:
     return False
 
 
-def build_email_preview_details(raw: bytes, path: str = "") -> dict[str, Any]:
-    """Structured headers, body, and attachment metadata for artifact preview."""
+def build_email_preview_details(
+    raw: bytes, path: str = "", *, sibling_paths: list[str] | None = None
+) -> dict[str, Any]:
+    """Structured headers, body, and attachment metadata for artifact preview.
+
+    V45: for Apple Mail ``.emlx`` the trailing plist (flags, date-received,
+    remote-id, gmail-labels) is decoded into ``out["emlx"]`` and
+    ``.partial.emlx`` sidecar attachments are appended to ``attachments`` with
+    ``source="apple_mail_sidecar"`` so the attachment count is complete.
+    """
     rfc = extract_rfc_message_bytes(raw, path)
     out: dict[str, Any] = {
         "parse_ok": False,
@@ -269,6 +277,14 @@ def build_email_preview_details(raw: bytes, path: str = "") -> dict[str, Any]:
         "body_html": "",
         "attachments": [],
     }
+    try:
+        from app.parsers.emlx_sidecar import enrich_emlx
+
+        emlx_meta = enrich_emlx(raw, path, sibling_paths=sibling_paths)
+        if emlx_meta.get("is_emlx"):
+            out["emlx"] = emlx_meta
+    except Exception:
+        emlx_meta = {}
     if not rfc or len(rfc) > _MAX_MESSAGE_BYTES:
         return out
     try:
@@ -314,7 +330,21 @@ def build_email_preview_details(raw: bytes, path: str = "") -> dict[str, Any]:
             "disposition": part.get_content_disposition() or "attachment",
             "inline": part.get_content_disposition() == "inline",
         })
-    out["attachments"] = attachments[:40]
+    for sc in (emlx_meta.get("sidecar_attachments") or []):
+        attachments.append({
+            "part_index": None,
+            "filename": sc["file_name"],
+            "content_type": mimetypes.guess_type(sc["file_name"])[0] or "application/octet-stream",
+            "size": None,
+            "disposition": "attachment",
+            "inline": False,
+            "source": "apple_mail_sidecar",
+            "sidecar_path": sc["path"],
+            "mime_part_index": sc.get("mime_part_index"),
+        })
+    out["attachments"] = attachments[:60]
+    if emlx_meta.get("date_received") and not out["headers"].get("date"):
+        out["headers"]["date"] = emlx_meta["date_received"]
     return out
 
 

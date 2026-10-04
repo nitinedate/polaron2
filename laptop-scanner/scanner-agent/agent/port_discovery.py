@@ -1,25 +1,26 @@
-"""Fast TCP port discovery used before local Greenbone scans.
+"""Fast pre-scan TCP discovery for the portable Greenbone scanner.
 
-The central Polaron scanner already reduces Greenbone work by probing the fast
-candidate port set and passing only discovered TCP ports to OpenVAS.  The edge
-scanner mirrors that behavior so client-side scans do not waste VT time on
-known-closed ports.
-
-This optimization is intentionally scoped to PORT_PROFILE=fast.  Operators
-who explicitly select PORT_PROFILE=full retain the full T:1-65535 scan.
+The purpose is not to decide whether an authorized host is alive.  It records
+which candidate service ports answer so the scan log can show them.  The
+OpenVAS task still uses the full fast service set (SSH, TLS, SMB, and the
+other site-VA ports).  A 250ms probe that only sees 135/139/445 must not drop
+22 and 443, or the SSL and SSH findings a Nessus site assessment reports
+cannot be produced.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable
+from typing import Any
 
-log = logging.getLogger("scanner_agent.port_discovery")
-
-DEFAULT_FALLBACK_RANGE = "T:22,80,443,445,3389,8080"
+DEFAULT_FAST_RANGE = (
+    "T:21-23,T:25,T:53,T:80,T:81,T:88,T:110,T:111,T:135,T:139,T:143,T:389,"
+    "T:443,T:445,T:465,T:587,T:631,T:993,T:995,T:1433,T:1521,T:1723,T:2049,"
+    "T:3000,T:3306,T:3389,T:5432,T:5672,T:5900,T:5985,T:6379,T:6443,"
+    "T:8080,T:8443,T:9000,T:9418,T:27017"
+)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -29,12 +30,15 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def parse_tcp_ports_from_range(spec: str) -> list[int]:
-    """Expand a Greenbone TCP range (for example T:80,443,8000-8002)."""
+def enabled() -> bool:
+    return _env_bool("PORT_DISCOVERY_ENABLED", True)
+
+
+def parse_tcp_ports(spec: str) -> list[int]:
     raw = (spec or "").strip()
     if raw.upper().startswith("T:"):
         raw = raw[2:]
-    ports: set[int] = set()
+    out: list[int] = []
     for part in raw.split(","):
         token = part.strip()
         if not token:
@@ -49,136 +53,108 @@ def parse_tcp_ports_from_range(spec: str) -> list[int]:
                 continue
             if lo > hi:
                 lo, hi = hi, lo
-            lo = max(1, lo)
-            hi = min(65535, hi)
-            ports.update(range(lo, hi + 1))
+            out.extend(range(max(1, lo), min(65535, hi) + 1))
             continue
         try:
-            value = int(token)
+            port = int(token)
         except ValueError:
             continue
-        if 1 <= value <= 65535:
-            ports.add(value)
-    return sorted(ports)
+        if 1 <= port <= 65535:
+            out.append(port)
+    return sorted(set(out))
 
 
-def ports_to_gvm_range(ports: list[int], *, fallback: str = DEFAULT_FALLBACK_RANGE) -> str:
-    clean = sorted({int(port) for port in ports if 1 <= int(port) <= 65535})
+def ports_to_gvm_range(ports: list[int]) -> str:
+    clean = sorted({int(p) for p in ports if 1 <= int(p) <= 65535})
     if not clean:
-        return fallback
-    return "T:" + ",".join(str(port) for port in clean)
+        return DEFAULT_FAST_RANGE
+    return ",".join(f"T:{p}" for p in clean)
 
 
 def _timeout_sec() -> float:
     try:
-        return max(0.05, min(5.0, float(os.environ.get("PORT_DISCOVERY_TIMEOUT_SEC") or 0.35)))
+        return max(0.05, min(2.0, float(os.environ.get("PORT_DISCOVERY_TIMEOUT_SEC") or 0.25)))
     except (TypeError, ValueError):
-        return 0.35
+        return 0.25
 
 
-def _worker_count(probe_count: int) -> int:
+def _workers(total_probes: int) -> int:
     try:
-        configured = int(os.environ.get("PORT_DISCOVERY_WORKERS") or 64)
+        configured = int(os.environ.get("PORT_DISCOVERY_WORKERS") or 32)
     except (TypeError, ValueError):
-        configured = 64
-    configured = max(1, min(256, configured))
-    return max(1, min(probe_count or 1, configured))
+        configured = 32
+    return max(1, min(max(8, configured), max(1, total_probes), 96))
 
 
-def discover_open_tcp_ports(
+def candidate_range() -> str:
+    return (os.environ.get("PORT_DISCOVERY_RANGE") or DEFAULT_FAST_RANGE).strip() or DEFAULT_FAST_RANGE
+
+
+def probe_open_tcp_ports(
     hosts: list[str],
-    candidate_range: str,
     *,
+    port_range: str | None = None,
     timeout: float | None = None,
-    connector: Callable[..., Any] | None = None,
-) -> dict[str, Any]:
-    """Probe the candidate TCP set concurrently and return per-host open ports."""
-    clean_hosts = list(dict.fromkeys(str(host).strip() for host in hosts if str(host).strip()))
-    candidate_ports = parse_tcp_ports_from_range(candidate_range)
-    found: dict[str, list[int]] = {host: [] for host in clean_hosts}
-    connect = connector or socket.create_connection
-    probe_timeout = _timeout_sec() if timeout is None else max(0.01, float(timeout))
-    probe_count = len(clean_hosts) * len(candidate_ports)
+) -> dict[str, list[int]]:
+    """Return observed open candidate TCP ports for each host.
 
-    if not clean_hosts or not candidate_ports:
-        return {
-            "by_host": found,
-            "open_ports": [],
-            "candidate_ports": candidate_ports,
-            "probe_count": probe_count,
-            "workers": 0,
-            "timeout_sec": probe_timeout,
-        }
+    A refused/filtered/timeout result is not treated as proof that the host is
+    dead.  Callers must use the fast fallback range when this returns no ports.
+    """
+    clean_hosts = [str(h).strip() for h in hosts if str(h).strip()]
+    ports = parse_tcp_ports(port_range or candidate_range())
+    result: dict[str, list[int]] = {host: [] for host in clean_hosts}
+    if not clean_hosts or not ports:
+        return result
+
+    to = _timeout_sec() if timeout is None else max(0.05, float(timeout))
 
     def _one(host: str, port: int) -> tuple[str, int, bool]:
         try:
-            conn = connect((host, port), timeout=probe_timeout)
-            # socket.create_connection returns a context-manager socket, while
-            # tests may use a minimal close-only fake.
-            try:
-                close = getattr(conn, "close", None)
-                if callable(close):
-                    close()
-            finally:
-                pass
-            return host, port, True
+            with socket.create_connection((host, int(port)), timeout=to):
+                return host, int(port), True
         except OSError:
-            return host, port, False
+            return host, int(port), False
 
-    workers = _worker_count(probe_count)
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="aetheris-port-probe") as pool:
-        futures = [pool.submit(_one, host, port) for host in clean_hosts for port in candidate_ports]
-        for future in as_completed(futures):
-            host, port, is_open = future.result()
+    total = len(clean_hosts) * len(ports)
+    with ThreadPoolExecutor(max_workers=_workers(total), thread_name_prefix="aetheris-port") as pool:
+        futs = [pool.submit(_one, host, port) for host in clean_hosts for port in ports]
+        for fut in as_completed(futs):
+            host, port, is_open = fut.result()
             if is_open:
-                found[host].append(port)
+                result[host].append(port)
 
-    for host in found:
-        found[host] = sorted(set(found[host]))
-    open_ports = sorted({port for ports in found.values() for port in ports})
-    return {
-        "by_host": found,
-        "open_ports": open_ports,
-        "candidate_ports": candidate_ports,
-        "probe_count": probe_count,
-        "workers": workers,
-        "timeout_sec": probe_timeout,
-    }
+    for host in result:
+        result[host] = sorted(set(result[host]))
+    return result
 
 
-def resolve_fast_scan_port_range(hosts: list[str], candidate_range: str) -> tuple[str, dict[str, Any]]:
-    """Return the target range for a Fast edge scan plus discovery telemetry."""
-    enabled = _env_bool("PORT_DISCOVERY_ENABLED", True)
-    fallback = (os.environ.get("PORT_DISCOVERY_FALLBACK_RANGE") or DEFAULT_FALLBACK_RANGE).strip()
-    if not enabled:
-        return candidate_range, {
+def discovery_plan(hosts: list[str]) -> dict[str, Any]:
+    """Build a Greenbone port-range plan without reducing fast-profile coverage."""
+    fallback = candidate_range()
+    if not enabled():
+        return {
             "enabled": False,
-            "fallback_used": False,
-            "port_range": candidate_range,
-            "by_host": {},
-            "open_ports": [],
+            "port_range": fallback,
+            "open_ports": {},
+            "open_port_count": 0,
+            "fallback": True,
         }
 
-    details = discover_open_tcp_ports(hosts, candidate_range)
-    open_ports = list(details.get("open_ports") or [])
-    fallback_used = not bool(open_ports)
-    selected = ports_to_gvm_range(open_ports, fallback=fallback)
-    details.update(
-        {
+    observed = probe_open_tcp_ports(hosts, port_range=fallback)
+    union = sorted({p for vals in observed.values() for p in vals})
+    if not union:
+        return {
             "enabled": True,
-            "fallback_used": fallback_used,
-            "port_range": selected,
+            "port_range": fallback,
+            "open_ports": observed,
+            "open_port_count": 0,
+            "fallback": True,
         }
-    )
-    log.info(
-        "Fast port discovery hosts=%d probes=%d workers=%d open_ports=%s selected_range=%s fallback=%s",
-        len(hosts),
-        int(details.get("probe_count") or 0),
-        int(details.get("workers") or 0),
-        open_ports,
-        selected,
-        fallback_used,
-    )
-    for host, ports in (details.get("by_host") or {}).items():
-        log.info("Fast port discovery host=%s open_tcp=%s", host, ports)
-    return selected, details
+    return {
+        "enabled": True,
+        "port_range": ports_to_gvm_range(union),
+        "open_ports": observed,
+        "open_port_count": len(union),
+        "fallback": False,
+    }

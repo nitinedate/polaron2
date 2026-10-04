@@ -42,6 +42,13 @@ from app.services.job_control import (
 from app.services.os_detect import detect_os_from_paths
 from app.services.storage import put_bytes, put_file
 from app.services.virtual_disk import VirtualDisk, enumerate_all_files, open_virtual_disk, read_full_file_from_disk
+from app.services.extract_shard_v45 import (
+    ShardEventBus,
+    configure_read_gate,
+    plan_readers as plan_readers_v45,
+    shard_worker_v45,
+)
+from app.services.virtual_disk import vd_plan as _vd_plan
 
 log = logging.getLogger("extracted_disk")
 
@@ -118,6 +125,8 @@ class _ProgressFlusher:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_log_monotonic = 0.0
+        # V45: shard threads emit here; this thread is the only DB writer.
+        self.event_bus = ShardEventBus()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -127,6 +136,19 @@ class _ProgressFlusher:
 
     def mark_dirty(self) -> None:
         self._dirty.set()
+
+    def _drain_events(self, db) -> int:
+        events = self.event_bus.drain()
+        for level, message, metadata in events:
+            write_disk_log(db, self.job_id, message, stage="extract", level=level, metadata=metadata)
+        if self.event_bus.dropped:
+            write_disk_log(
+                db, self.job_id,
+                f"{self.event_bus.dropped} shard log events dropped (bus full)",
+                stage="extract", level="warning",
+            )
+            self.event_bus.dropped = 0
+        return len(events)
 
     def stop(self, *, flush: bool = True) -> None:
         self._stop.set()
@@ -153,6 +175,12 @@ class _ProgressFlusher:
         total = snap["total_files"]
         extracted = snap["files_extracted"]
         if total <= 0 and extracted <= 0:
+            try:
+                with firm_session(self.schema_name) as db:
+                    self._drain_events(db)
+                    db.commit()
+            except Exception:
+                log.debug("event drain failed for job %s", self.job_id, exc_info=True)
             return
         pct = _progress_pct(extracted, total, snap["shards_done"], self.shard_count)
         pre_filtered = snap["pre_filtered"]
@@ -169,6 +197,7 @@ class _ProgressFlusher:
         )
         try:
             with firm_session(self.schema_name) as db:
+                self._drain_events(db)
                 if write_log:
                     write_disk_log(
                         db,
@@ -265,9 +294,22 @@ def _filter_nodes(
         "policy_reason": policy_reason,
         "noise": noise_ledger.as_dict(),
     }
+    # V45: tree-level OS/vendor exclusion (AXIOM-aligned). Runs before the
+    # per-file rules; a scope-pack *specific* claim always wins inside it.
+    try:
+        from app.services.extract_os_vendor_noise import os_vendor_mode, should_skip_os_vendor
+    except Exception:  # pragma: no cover
+        os_vendor_mode = lambda: "keep"  # noqa: E731
+        should_skip_os_vendor = lambda *a, **k: (False, None)  # noqa: E731
+    stats["os_vendor_mode"] = os_vendor_mode()
     for node in nodes:
         rel = node["path"]
         size = int(node.get("size_bytes") or 0)
+        skip_vendor, vendor_rule = should_skip_os_vendor(rel, size_bytes=size, os_family=family)
+        if skip_vendor:
+            stats["filtered_out"] += 1
+            stats[vendor_rule or "os_vendor_tree"] = stats.get(vendor_rule or "os_vendor_tree", 0) + 1
+            continue
         ok, reason = should_extract_node_v2(
             rel,
             size,
@@ -1512,6 +1554,14 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
     except Exception:
         pass
 
+    # V45: physical-source cap (HDD/USB => 1-2 readers) + bounded read semaphore.
+    try:
+        parallel_readers, read_gate_n, media_reason = plan_readers_v45(vd, parallel_readers)
+        configure_read_gate(read_gate_n)
+        io_reason += f"+v45[{media_reason};gate={read_gate_n}]"
+    except Exception:
+        log.debug("v45 reader planning failed", exc_info=True)
+
     write_disk_log(
         db,
         job_id,
@@ -1724,6 +1774,8 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
             "hash_files": settings.extract_hash_files,
             "stop_check_interval": settings.extract_stop_check_interval,
             "tar_bufsize": getattr(settings, "extract_tar_bufsize", 262_144),
+            "vd_plan": _vd_plan(vd),
+            "part_prefix": _disk_prefix(job_id),
         }
         for shard_id, shard_nodes in shards.items()
         if shard_nodes and shard_id not in done_ids
@@ -1890,8 +1942,9 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
                             worker_count=worker_count,
                         )
                     try:
-                        result = _shard_worker(
-                            p, progress, progress_flusher, stop_poller, shared_vd=vd
+                        result = shard_worker_v45(
+                            p, progress, progress_flusher, stop_poller,
+                            shared_vd=vd, event_bus=progress_flusher.event_bus,
                         )
                     except JobStopRequested:
                         return _handle_stop(
@@ -1919,7 +1972,10 @@ def build_extracted_disk_to_minio(db, job_id: str, vd: VirtualDisk, *, schema_na
             else:
                 with ThreadPoolExecutor(max_workers=min(parallel_readers, len(payloads))) as pool:
                     futures = {
-                        pool.submit(_shard_worker, p, progress, progress_flusher, stop_poller): p["shard_id"]
+                        pool.submit(
+                            shard_worker_v45, p, progress, progress_flusher, stop_poller,
+                            event_bus=progress_flusher.event_bus,
+                        ): p["shard_id"]
                         for p in payloads
                     }
                     for future in as_completed(futures):

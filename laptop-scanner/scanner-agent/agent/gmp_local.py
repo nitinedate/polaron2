@@ -16,10 +16,60 @@ FULL_AND_FAST_ID = "daba56c8-73ec-11df-a475-002264764cea"
 # Fast profile: common services. Omit 8000/8008/8081/8888 — Full-and-fast web NVTs
 # (path traversal, win.ini probes) stall the last few percent for a long time.
 FAST_PORTS = (
-    "T:21-23,25,53,80,81,88,110,111,135,139,143,389,443,445,465,587,631,993,995,"
-    "1433,1521,1723,2049,3000,3306,3389,5432,5672,5900,5985,6379,6443,"
-    "8080,8443,9000,9418,27017"
+    "T:21-23,T:25,T:53,T:80,T:81,T:88,T:110,T:111,T:135,T:139,T:143,T:389,"
+    "T:443,T:445,T:465,T:587,T:631,T:993,T:995,T:1433,T:1521,T:1723,T:2049,"
+    "T:3000,T:3306,T:3389,T:5432,T:5672,T:5900,T:5985,T:6379,T:6443,"
+    "T:8080,T:8443,T:9000,T:9418,T:27017"
 )
+
+# High-value UDP services commonly relevant to infrastructure/IP assessment.
+# GMP port_range requires each comma-separated range to carry T:/U: explicitly.
+# Full UDP (1-65535) remains available through UDP_PROFILE=full, but is not the
+# default because exhaustive UDP can dominate scan time on filtered networks.
+PRIORITY_UDP_PORTS = (
+    "U:53,U:67-69,U:123,U:137-138,U:161-162,U:500,U:514,U:520,U:623,U:1434,"
+    "U:1701,U:1812-1813,U:1900,U:4500,U:4789,U:5004,U:5060,U:5353,U:11211"
+)
+
+
+def _normalize_udp_port_range(value: str) -> str:
+    out: list[str] = []
+    for raw in (value or "").split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        if token.upper().startswith("U:"):
+            token = token[2:].strip()
+        if token:
+            out.append(f"U:{token}")
+    return ",".join(out)
+
+
+def _udp_port_range(profile: str | None = None) -> str:
+    raw = (profile if profile is not None else os.environ.get("UDP_PROFILE") or "priority").strip().lower()
+    if raw in {"off", "none", "disabled", "false", "0"}:
+        return ""
+    if raw in {"full", "all", "1-65535"}:
+        return "U:1-65535"
+    custom = (os.environ.get("UDP_PORT_RANGE") or "").strip()
+    if custom:
+        return _normalize_udp_port_range(custom)
+    return PRIORITY_UDP_PORTS
+
+
+def _with_udp_range(tcp_range: str, udp_profile: str | None = None) -> str:
+    base = (tcp_range or "").strip().rstrip(",")
+    if not base:
+        base = "T:1-65535"
+    if any(part.strip().upper().startswith("U:") for part in base.split(",")):
+        return base
+    udp = _udp_port_range(udp_profile)
+    return f"{base},{udp}" if udp else base
+
+
+def _default_scan_port_range(port_profile: str, udp_profile: str | None = None) -> str:
+    tcp = "T:1-65535" if str(port_profile or "").strip().lower() == "full" else FAST_PORTS
+    return _with_udp_range(tcp, udp_profile)
 
 def _report_filter_string(*, first: int | None = None, rows: int | None = None) -> str:
     """Fetch Greenbone results. Default is the full set (rows=-1)."""
@@ -86,19 +136,100 @@ def _severity_from_cvss(cvss: float) -> str:
 
 
 def _canonical_severity(threat: str | None, cvss: float) -> str:
-    """Never let a legacy Greenbone threat label downgrade a CVSS severity.
+    """Return Nessus-compatible CVSS severity only.
 
-    Some report variants expose ``threat=Log/Info`` while retaining a non-zero
-    numeric result severity.  Other variants use the broad legacy ``High`` band
-    for CVSS 9.x.  Take the most severe trustworthy signal instead of trusting
-    either field alone.
+    Greenbone's legacy ``threat`` text is retained in the result payload for
+    audit/debugging, but it must not change the technical severity shown by
+    Polaron.  Nessus severity bands are driven by the numeric CVSS score.
     """
-    cvss_sev = _severity_from_cvss(cvss)
-    raw = str(threat or "").strip().lower()
-    if raw in {"log", "debug"}:
-        raw = "info"
-    threat_sev = raw if raw in _SEVERITY_RANK else "info"
-    return cvss_sev if _SEVERITY_RANK[cvss_sev] >= _SEVERITY_RANK[threat_sev] else threat_sev
+    del threat
+    return _severity_from_cvss(cvss)
+
+
+def _valid_cvss(value: Any) -> float | None:
+    """Parse a valid 0..10 score without treating the string ``0.0`` as missing."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    if score < 0.0 or score > 10.0:
+        return None
+    return score
+
+
+def _best_cvss(nvt: Any, result: Any, tag_values: dict[str, str]) -> tuple[float, str, dict[str, float]]:
+    """Choose the strongest numeric technical severity signal in a GMP result.
+
+    Greenbone report variants are inconsistent: some put the usable score on
+    ``result/severity`` while ``nvt/cvss_base`` is literally ``0.0``.  The old
+    ``a or b`` parser considered the string ``0.0`` truthy and silently threw
+    away the real result score.  Keep every parsed candidate for traceability
+    and use the highest valid score, matching Nessus' highest-risk-factor
+    presentation when multiple CVSS signals describe the same finding.
+    """
+    raw_candidates: list[tuple[str, Any]] = [
+        ("result.severity", result.findtext("severity")),
+        ("nvt.cvss_base", nvt.findtext("cvss_base")),
+        ("nvt.cvss2_base", nvt.findtext("cvss2_base")),
+        ("nvt.cvss_v2_base", nvt.findtext("cvss_v2_base")),
+        ("nvt.cvss3_base", nvt.findtext("cvss3_base")),
+        ("nvt.cvss_v3_base", nvt.findtext("cvss_v3_base")),
+        ("nvt.cvss4_base", nvt.findtext("cvss4_base")),
+        ("nvt.cvss_v4_base", nvt.findtext("cvss_v4_base")),
+    ]
+    for key in (
+        "cvss_base", "cvss2_base", "cvss_v2_base",
+        "cvss3_base", "cvss_v3_base", "cvss4_base", "cvss_v4_base"
+    ):
+        raw_candidates.append((f"tags.{key}", tag_values.get(key)))
+
+    # Newer gvmd/NVT schemas can carry multiple CVSS generations under a
+    # severities list. Preserve each score as an independent candidate so a
+    # placeholder cvss_base=0.0 cannot hide an actual Critical result.
+    try:
+        for idx, value in enumerate(nvt.xpath(".//severities/severity/score/text()")):
+            raw_candidates.append((f"nvt.severities[{idx}].score", value))
+    except Exception:
+        pass
+
+    parsed: dict[str, float] = {}
+    for source, value in raw_candidates:
+        score = _valid_cvss(value)
+        if score is not None:
+            parsed[source] = score
+    if not parsed:
+        return 0.0, "none", {}
+
+    # Prefer result.severity on a tie because it is the per-result score emitted
+    # by gvmd; otherwise take the strongest valid technical score.
+    max_score = max(parsed.values())
+    tied = [name for name, score in parsed.items() if score == max_score]
+    source = "result.severity" if "result.severity" in tied else tied[0]
+    return max_score, source, parsed
+
+
+def _versioned_cvss_scores(candidates: dict[str, float]) -> dict[str, float | None]:
+    """Extract only explicitly versioned CVSS values for central normalization.
+
+    ``cvss_base`` and Greenbone ``result/severity`` are deliberately left as
+    generic scanner signals because their CVSS generation is not guaranteed by
+    the GMP report shape. This prevents a legacy v2 score from being mislabeled
+    as v3/v4 while still keeping the generic score available as a fallback.
+    """
+    names = {
+        "cvss_v2": ("nvt.cvss2_base", "nvt.cvss_v2_base", "tags.cvss2_base", "tags.cvss_v2_base"),
+        "cvss_v3": ("nvt.cvss3_base", "nvt.cvss_v3_base", "tags.cvss3_base", "tags.cvss_v3_base"),
+        "cvss_v4": ("nvt.cvss4_base", "nvt.cvss_v4_base", "tags.cvss4_base", "tags.cvss_v4_base"),
+    }
+    out: dict[str, float | None] = {"cvss_v2": None, "cvss_v3": None, "cvss_v4": None}
+    for version, sources in names.items():
+        for source in sources:
+            if source in candidates:
+                out[version] = candidates[source]
+                break
+    return out
 
 
 def _xml_result_nodes(report: Any) -> list[Any]:
@@ -117,10 +248,17 @@ def _feed_count_from_xml(response: Any) -> int | None:
     if response is None or not hasattr(response, "xpath"):
         return None
     paths = (
+        # Native <get_nvts> responses.
         ".//nvt_count/filtered/text()",
         ".//nvt_count/total/text()",
         ".//nvt_count/text()",
         ".//config/nvt_count/text()",
+        # python-gvm may implement get_nvts() through GMP get_info unless
+        # extended=True is requested.  gvmd 26.x then reports <info_count>
+        # instead of <nvt_count>.  Treat both schemas equivalently.
+        ".//info_count/filtered/text()",
+        ".//info_count/total/text()",
+        ".//info_count/text()",
     )
     values: list[int] = []
     for xpath in paths:
@@ -133,6 +271,13 @@ def _feed_count_from_xml(response: Any) -> int | None:
         except Exception:
             pass
     return max(values) if values else None
+
+
+def _minimum_nvt_count() -> int:
+    try:
+        return max(1, int(os.environ.get("GVM_MIN_NVT_COUNT") or 10000))
+    except (TypeError, ValueError):
+        return 10000
 
 
 def _feed_health(gmp: Any, config_id: str | None = None) -> dict[str, Any]:
@@ -152,7 +297,14 @@ def _feed_health(gmp: Any, config_id: str | None = None) -> dict[str, Any]:
 
     nvt_count: int | None = None
     try:
-        resp = gmp.get_nvts(filter_string="rows=1 first=1")
+        # Request the native NVT response first.  On python-gvm 26.x the
+        # non-extended call can be backed by GMP get_info, which may omit the
+        # nvt_count element that older readiness code expected.
+        try:
+            resp = gmp.get_nvts(filter_string="rows=1 first=1", extended=True)
+        except TypeError:
+            # Compatibility with older python-gvm implementations.
+            resp = gmp.get_nvts(filter_string="rows=1 first=1")
         nvt_count = _feed_count_from_xml(resp)
         # If count metadata is absent, at least prove that one NVT exists.
         if nvt_count is None and hasattr(resp, "xpath") and resp.xpath(".//nvt"):
@@ -181,10 +333,7 @@ def _assert_feed_quality(gmp: Any, config_id: str | None = None) -> dict[str, An
     health = _feed_health(gmp, config_id)
     if health["syncing"]:
         raise RuntimeError("Greenbone feed is still synchronizing; refusing to start a partial-quality scan")
-    try:
-        minimum = max(1, int(os.environ.get("GVM_MIN_NVT_COUNT") or 10000))
-    except (TypeError, ValueError):
-        minimum = 10000
+    minimum = _minimum_nvt_count()
     for label in ("nvt_count", "config_nvt_count"):
         count = health.get(label)
         if isinstance(count, int) and count >= 0 and count < minimum:
@@ -227,9 +376,10 @@ def _session(
     username: str,
     password: str,
     verify: bool = False,
+    timeout: float | None = None,
 ) -> Iterator[Any]:
     TLSConnection, UnixSocketConnection, GMP, transform = _imports()
-    timeout = _gmp_timeout()
+    timeout = _gmp_timeout() if timeout is None else max(1.0, float(timeout))
     if socket_path:
         try:
             conn = UnixSocketConnection(path=socket_path, timeout=timeout)
@@ -277,30 +427,90 @@ def _find_scanner_id(gmp: Any) -> str:
     raise RuntimeError("No OpenVAS scanner found in Greenbone")
 
 
-def _ospd_feed_ready(gmp: Any) -> bool:
-    """True when OSPd has published an NVT feed version (scans can actually run)."""
+def _ospd_feed_state(gmp: Any) -> dict[str, Any]:
+    """Return conservative scanner-feed readiness evidence.
+
+    A live OSP socket alone is not readiness.  The scanner is only ready to
+    claim jobs after gvmd can see the NVT inventory populated from OSPd.
+    """
+    minimum = _minimum_nvt_count()
     try:
-        resp = gmp.get_feeds()
-        syncing = []
-        versions = []
-        if hasattr(resp, "xpath"):
-            syncing = resp.xpath(".//currently_syncing")
-            versions = [str(v).strip() for v in resp.xpath(".//feed/version/text()") if str(v).strip()]
-        if syncing:
-            return False
+        health = _feed_health(gmp, None)
+    except Exception as exc:
+        return {
+            "ready": False,
+            "reason": "feed_probe_failed",
+            "detail": f"Greenbone feed probe failed: {exc}",
+            "nvt_count": None,
+            "minimum": minimum,
+        }
+
+    count = health.get("nvt_count")
+    if health.get("syncing"):
+        return {
+            "ready": False,
+            "reason": "feed_syncing",
+            "detail": "Greenbone feed is still synchronizing/loading; queued scans will start automatically when ready",
+            "nvt_count": count,
+            "minimum": minimum,
+            "versions": health.get("versions") or [],
+        }
+    if count is None:
+        return {
+            "ready": False,
+            "reason": "nvt_inventory_unavailable",
+            "detail": "OSPd OpenVAS has not published its NVT inventory yet; initial VT loading is still in progress",
+            "nvt_count": None,
+            "minimum": minimum,
+            "versions": health.get("versions") or [],
+        }
+    if count == -1:
+        versions = health.get("versions") or []
         if versions:
-            return True
-    except Exception:
-        pass
-    try:
-        nvts = gmp.get_nvts(filter_string="rows=1 first=1")
-        if hasattr(nvts, "xpath") and nvts.xpath(".//nvt"):
-            return True
-        if hasattr(nvts, "xpath"):
-            return False
-    except Exception:
-        pass
-    return True
+            # Current gvmd/python-gvm combinations can expose NVT objects and
+            # feed versions without a total-count element.  This is positive
+            # inventory evidence, not an incomplete-feed signal.  Full scan
+            # readiness still requires the configured scan config to exist in
+            # LocalOpenVAS.ready(), so this does not fail open.
+            return {
+                "ready": True,
+                "reason": "nvt_inventory_present_count_unavailable",
+                "detail": "OSPd OpenVAS NVT inventory is present and feed versions are available; gvmd did not expose a total NVT count, so readiness will be confirmed by the scan-config gate",
+                "nvt_count": count,
+                "minimum": minimum,
+                "versions": versions,
+                "count_trustworthy": False,
+            }
+        return {
+            "ready": False,
+            "reason": "nvt_count_unavailable",
+            "detail": "OSPd OpenVAS exposes NVT data but no feed version or trustworthy total count yet",
+            "nvt_count": count,
+            "minimum": minimum,
+            "versions": versions,
+        }
+    if count < minimum:
+        return {
+            "ready": False,
+            "reason": "nvt_inventory_loading",
+            "detail": f"OSPd OpenVAS NVT inventory is still loading ({count}/{minimum} minimum)",
+            "nvt_count": count,
+            "minimum": minimum,
+            "versions": health.get("versions") or [],
+        }
+    return {
+        "ready": True,
+        "reason": "ready",
+        "detail": f"OSPd OpenVAS NVT inventory ready ({count} VTs)",
+        "nvt_count": count,
+        "minimum": minimum,
+        "versions": health.get("versions") or [],
+    }
+
+
+def _ospd_feed_ready(gmp: Any) -> bool:
+    """True only with positive NVT inventory evidence; never fail open."""
+    return bool(_ospd_feed_state(gmp).get("ready"))
 
 
 def _task_status(gmp: Any, task_id: str) -> tuple[str, float, Any]:
@@ -605,25 +815,7 @@ def _vulnerabilities_from_report(response: Any) -> list[dict[str, Any]]:
         oid = nvt.get("oid") or ""
         name = nvt.findtext("name") or res.findtext("name") or ""
         family = nvt.findtext("family") or ""
-        try:
-            cvss = float(nvt.findtext("cvss_base") or res.findtext("severity") or 0)
-        except (TypeError, ValueError):
-            cvss = 0.0
-        cve = None
-        for ref in nvt.xpath("refs/ref"):
-            if (ref.get("type") or "").lower() == "cve":
-                cve = ref.get("id")
-                break
-        port_raw = res.findtext("port") or ""
-        port = None
-        protocol = None
-        if "/" in port_raw:
-            port_part, protocol = port_raw.split("/", 1)
-            try:
-                port = int(port_part)
-            except ValueError:
-                port = None
-        threat = (res.findtext("threat") or "").lower()
+
         tags_raw = nvt.findtext("tags") or ""
         tag_values: dict[str, str] = {}
         for part in tags_raw.split("|"):
@@ -634,13 +826,81 @@ def _vulnerabilities_from_report(response: Any) -> list[dict[str, Any]]:
             value = value.strip()
             if key and value and key not in tag_values:
                 tag_values[key] = value
+
+        cvss, cvss_source, cvss_candidates = _best_cvss(nvt, res, tag_values)
+        versioned_cvss = _versioned_cvss_scores(cvss_candidates)
+        result_severity_raw = (res.findtext("severity") or "").strip() or None
+        threat_raw = (res.findtext("threat") or "").strip() or None
+        severity = _canonical_severity(threat_raw, cvss)
+
+        cves: list[str] = []
+        cwes: list[str] = []
+        references: list[str] = []
+        for ref in nvt.xpath("refs/ref"):
+            rtype = (ref.get("type") or "").strip().lower()
+            rid = (ref.get("id") or "").strip()
+            if not rid:
+                continue
+            references.append(f"{rtype}:{rid}" if rtype else rid)
+            if rtype == "cve":
+                cve_id = rid.upper()
+                if cve_id not in cves:
+                    cves.append(cve_id)
+            elif rtype == "cwe":
+                cwe_id = rid.upper()
+                if not cwe_id.startswith("CWE-") and cwe_id.isdigit():
+                    cwe_id = f"CWE-{cwe_id}"
+                if cwe_id not in cwes:
+                    cwes.append(cwe_id)
+        cve = cves[0] if cves else None
+        cwe = cwes[0] if cwes else None
+
+        port_raw = res.findtext("port") or ""
+        port = None
+        protocol = None
+        if "/" in port_raw:
+            port_part, protocol = port_raw.split("/", 1)
+            try:
+                port = int(port_part)
+            except ValueError:
+                port = None
+
         qod_raw = res.findtext("qod/value") or res.findtext("qod") or ""
         try:
             qod = float(qod_raw) if str(qod_raw).strip() else None
         except (TypeError, ValueError):
             qod = None
         qod_type = (res.findtext("qod/type") or "").strip() or None
-        severity = _canonical_severity(threat, cvss)
+
+        def _tag_float(*keys: str) -> float | None:
+            for key in keys:
+                raw = tag_values.get(key)
+                if raw is None:
+                    continue
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+        cvss_v2_vector = (tag_values.get("cvss_v2_vector") or tag_values.get("cvss2_vector") or None)
+        cvss_v3_vector = (tag_values.get("cvss_v3_vector") or tag_values.get("cvss3_vector") or None)
+        cvss_v4_vector = (tag_values.get("cvss_v4_vector") or tag_values.get("cvss4_vector") or None)
+        cvss_vector = (
+            cvss_v4_vector
+            or cvss_v3_vector
+            or cvss_v2_vector
+            or tag_values.get("cvss_base_vector")
+            or tag_values.get("cvss_vector")
+            or None
+        )
+        exploit_maturity = (
+            tag_values.get("exploit_maturity")
+            or tag_values.get("exploit_code_maturity")
+            or tag_values.get("exploit")
+            or None
+        )
+
         vulns.append(
             {
                 "source_result_id": (res.get("id") or "").strip() or None,
@@ -649,18 +909,39 @@ def _vulnerabilities_from_report(response: Any) -> list[dict[str, Any]]:
                 "nvt_oid": oid,
                 "plugin_family": family,
                 "cve": cve,
+                "cves": cves,
+                "cwe": cwe,
+                "cwes": cwes,
+                "references": references,
                 "score": cvss,
                 "cvss": cvss,
+                "cvss_v2": versioned_cvss["cvss_v2"],
+                "cvss_v3": versioned_cvss["cvss_v3"],
+                "cvss_v4": versioned_cvss["cvss_v4"],
+                "cvss_source": cvss_source,
+                "cvss_candidates": cvss_candidates,
+                "cvss_vector": cvss_vector,
+                "cvss_v2_vector": cvss_v2_vector,
+                "cvss_v3_vector": cvss_v3_vector,
+                "cvss_v4_vector": cvss_v4_vector,
+                "greenbone_result_severity": result_severity_raw,
+                "scanner_threat": threat_raw,
+                "risk_factor": threat_raw,
                 "severity": severity,
+                "scan_engine": "openvas",
+                "engine": "openvas",
                 "qod": qod,
                 "qod_type": qod_type,
+                "vpr_score": _tag_float("vpr", "vpr_score"),
+                "epss_percentile": _tag_float("epss_percentile", "epss"),
+                "exploit_maturity": exploit_maturity,
                 "plugin_name": name,
                 "description": res.findtext("description") or tag_values.get("insight") or tag_values.get("summary") or "",
                 "synopsis": tag_values.get("summary") or name,
                 "solution": tag_values.get("solution") or "",
                 "port": port,
                 "protocol": protocol,
-                "host": res.findtext("host") or None,
+                "host": (res.findtext("host") or "").strip() or None,
             }
         )
     return vulns
@@ -915,17 +1196,46 @@ class LocalOpenVAS:
         self.username = os.environ.get("GVM_USERNAME") or "admin"
         self.password = os.environ.get("GVM_PASSWORD") or "admin"
         self.port_profile = (os.environ.get("PORT_PROFILE") or "full").strip().lower()
+        self.udp_profile = (os.environ.get("UDP_PROFILE") or "priority").strip().lower()
         plugins_raw = int(os.environ.get("PLUGINS_TIMEOUT_SEC") or 0)
         scanner_raw = int(os.environ.get("SCANNER_PLUGINS_TIMEOUT_SEC") or 0)
-        self.plugins_timeout = 86400 * 30 if plugins_raw <= 0 else max(30, plugins_raw)
-        self.scanner_plugins_timeout = 86400 * 30 if scanner_raw <= 0 else max(self.plugins_timeout, scanner_raw)
-        self.max_checks = max(1, int(os.environ.get("GVM_MAX_CHECKS") or 12))
-        self.max_hosts = max(1, int(os.environ.get("GVM_MAX_HOSTS") or 4))
-        self.checks_read_timeout = max(1, int(os.environ.get("GVM_CHECKS_READ_TIMEOUT") or 10))
-        self.timeout_retry = max(0, int(os.environ.get("GVM_TIMEOUT_RETRY") or 3))
-        self.open_sock_max_attempts = max(
-            1, int(os.environ.get("GVM_OPEN_SOCK_MAX_ATTEMPTS") or 5)
-        )
+        # V45 (Nessus parity). The previous 60 s / 90 s floors were added to stop
+        # an SMB connect loop from pinning a host at 94-97 %, but
+        # ``scanner_plugins_timeout`` is the budget for the *port-scanner* NVTs
+        # (Nmap / find_service). A full T:1-65535 sweep needs minutes, so at 90 s
+        # the scanner was killed, no services were discovered and every host
+        # finished with only 3 informational results (plugin_errors=1).
+        #
+        # Use Greenbone's defaults (NVT 320 s, scanner NVTs 36 000 s). Hung
+        # hosts are bounded by the agent-side watchdog instead
+        # (MAX_SCAN_RUNTIME_SEC / STALL_SEC), which cancels the task and keeps
+        # partial results rather than silently degrading coverage.
+        if plugins_raw <= 0:
+            plugins_raw = 320
+        if scanner_raw <= 0:
+            scanner_raw = 36000
+        self.plugins_timeout = max(60, plugins_raw)
+        self.scanner_plugins_timeout = max(self.plugins_timeout, scanner_raw)
+        # V45: honour the configured per-host check concurrency. The old
+        # ``max(configured, 16)`` silently overrode GVM_MAX_CHECKS=8, so eight
+        # concurrent IP tasks became 128 NVT processes on a laptop.
+        configured_checks = max(1, int(os.environ.get("GVM_MAX_CHECKS") or 8))
+        self.max_hosts = max(1, int(os.environ.get("GVM_MAX_HOSTS") or 1))
+        self.max_checks = min(configured_checks, 16)
+        full_defaults = self.port_profile == "full"
+        read_raw = max(1, int(os.environ.get("GVM_CHECKS_READ_TIMEOUT") or (10 if full_defaults else 5)))
+        retry_raw = max(0, int(os.environ.get("GVM_TIMEOUT_RETRY") or (3 if full_defaults else 1)))
+        sock_raw = max(1, int(os.environ.get("GVM_OPEN_SOCK_MAX_ATTEMPTS") or (5 if full_defaults else 2)))
+        # Fast mode keeps the old aggressive socket caps for throughput. Full
+        # assessment mode honors the configured retry/read values so slow SMB,
+        # SSH, TLS and appliance services are not prematurely abandoned.
+        if self.max_hosts <= 1 and self.port_profile != "full":
+            read_raw = min(read_raw, 5)
+            retry_raw = min(retry_raw, 1)
+            sock_raw = min(sock_raw, 2)
+        self.checks_read_timeout = read_raw
+        self.timeout_retry = retry_raw
+        self.open_sock_max_attempts = sock_raw
         self.scan_config_name = (os.environ.get("GVM_SCAN_CONFIG") or "Full and fast").strip()
         full_assessment = self.port_profile == "full"
         self.optimize_test = (
@@ -945,6 +1255,7 @@ class LocalOpenVAS:
         # accepts the literal GMP alive-test string "Consider Alive".
         self.alive_test = (os.environ.get("GVM_ALIVE_TEST") or "Consider Alive").strip()
         self._next_not_ready_log = 0.0
+        self.last_readiness_detail = "Greenbone readiness has not been checked yet"
 
     def ready(self) -> bool:
         sock = (self.socket_path or "").strip()
@@ -960,30 +1271,40 @@ class LocalOpenVAS:
                 password=self.password,
             ) as gmp:
                 _find_scanner_id(gmp)
-                config_id = _find_config_id(gmp, self.scan_config_name)
-                if not _ospd_feed_ready(gmp):
-                    self._log_not_ready(
-                        "OSPd OpenVAS feed is still loading — not claiming jobs yet"
-                    )
+                feed_state = _ospd_feed_state(gmp)
+                if not feed_state.get("ready"):
+                    self._log_not_ready(str(feed_state.get("detail") or "OSPd OpenVAS feed is still loading"))
                     return False
-                _assert_feed_quality(gmp, config_id)
+                config_id = _find_config_id(gmp, self.scan_config_name)
+                health = _assert_feed_quality(gmp, config_id)
+            count = health.get("nvt_count")
+            self.last_readiness_detail = (
+                f"Greenbone ready: {self.scan_config_name}; NVTs={count}"
+                if count is not None
+                else f"Greenbone ready: {self.scan_config_name}"
+            )
             return True
         except Exception as exc:
             self._log_not_ready("Local OpenVAS not ready: %s" % exc)
             return False
 
     def _log_not_ready(self, message: str) -> None:
+        self.last_readiness_detail = str(message)[:500]
         now = time.monotonic()
         if now < self._next_not_ready_log:
             return
         log.warning("%s", message)
         self._next_not_ready_log = now + 60.0
 
-    def start_scan(self, *, name: str, targets: list[str]) -> str:
+    def start_scan(self, *, name: str, targets: list[str], port_range: str | None = None) -> str:
         host_list = [t.strip() for t in targets if t and t.strip()]
         if not host_list:
             raise ValueError("At least one target is required")
-        port_range = FAST_PORTS if self.port_profile != "full" else "T:1-65535"
+        supplied_range = (port_range or "").strip()
+        if supplied_range:
+            port_range = _with_udp_range(supplied_range, self.udp_profile)
+        else:
+            port_range = _default_scan_port_range(self.port_profile, self.udp_profile)
         try:
             from agent.control_plane import port_range_without_control_plane
 
@@ -1105,11 +1426,15 @@ class LocalOpenVAS:
             except Exception:
                 report_id = None
             log.info(
-                "Started local OpenVAS task %s report=%s hosts=%s alive_test=%s",
+                "Started local OpenVAS task %s report=%s hosts=%s alive_test=%s "
+                "port_profile=%s udp_profile=%s port_range=%s",
                 task_id,
                 report_id,
                 host_list,
                 self.alive_test,
+                self.port_profile,
+                self.udp_profile,
+                port_range,
             )
             return str(task_id)
 
@@ -1169,7 +1494,13 @@ class LocalOpenVAS:
             "password": self.password,
         }
 
-    def poll(self, task_id: str, *, expected_targets: list[str] | None = None) -> dict[str, Any]:
+    def poll(
+        self,
+        task_id: str,
+        *,
+        expected_targets: list[str] | None = None,
+        include_running_report: bool = False,
+    ) -> dict[str, Any]:
         targets = [str(t).strip() for t in (expected_targets or []) if str(t).strip()]
         with _session(**self._session_kwargs()) as gmp:
             status, progress, _ = _task_status(gmp, task_id)
@@ -1178,7 +1509,7 @@ class LocalOpenVAS:
         # report. That is not a failure — wait for Done, then harvest.
         if status in {"done", "finished", "succeeded"}:
             mapped = "completed"
-        elif status in {"stopped", "interrupted"}:
+        elif status in {"stopped", "interrupted", "stop requested"}:
             mapped = "stopped"
         elif status in {"failed", "internal error", "delete requested"}:
             mapped = "failed"
@@ -1201,7 +1532,7 @@ class LocalOpenVAS:
             "assessment_verdict": "not_finished" if mapped == "running" else "pending_report",
             "alive_test": self.alive_test,
         }
-        if mapped in {"completed", "stopped", "failed"}:
+        if mapped in {"completed", "stopped", "failed"} or include_running_report:
             last_exc: Exception | None = None
             for attempt in range(8):
                 try:
@@ -1261,6 +1592,7 @@ class LocalOpenVAS:
                 port=self.port,
                 username=self.username,
                 password=self.password,
+                timeout=8,
             ) as gmp:
                 gmp.stop_task(task_id)
         except Exception:

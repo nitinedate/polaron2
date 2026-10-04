@@ -133,6 +133,15 @@ services:
 
   configure-openvas:
     image: registry.community.greenbone.net/community/openvas-scanner:stable
+    environment:
+      GVM_MAX_HOSTS: ${GVM_MAX_HOSTS:-1}
+      GVM_MAX_CHECKS: ${GVM_MAX_CHECKS:-8}
+      GVM_OPTIMIZE_TEST: ${GVM_OPTIMIZE_TEST:-no}
+      GVM_CHECKS_READ_TIMEOUT: ${GVM_CHECKS_READ_TIMEOUT:-10}
+      GVM_TIMEOUT_RETRY: ${GVM_TIMEOUT_RETRY:-3}
+      GVM_OPEN_SOCK_MAX_ATTEMPTS: ${GVM_OPEN_SOCK_MAX_ATTEMPTS:-5}
+      PLUGINS_TIMEOUT_SEC: ${PLUGINS_TIMEOUT_SEC:-320}
+      SCANNER_PLUGINS_TIMEOUT_SEC: ${SCANNER_PLUGINS_TIMEOUT_SEC:-36000}
     volumes:
       - gvm_openvas_data:/mnt
       - gvm_openvas_log:/var/log/openvas
@@ -140,7 +149,9 @@ services:
       - /bin/sh
       - -c
       - |
-        printf "table_driven_lsc = yes\nopenvasd_server = http://openvasd:80\nmax_hosts = 10\nmax_checks = 12\noptimize_test = no\nplugins_timeout = 2592000\nscanner_plugins_timeout = 2592000\nchecks_read_timeout = 5\ntimeout_retry = 1\nopen_sock_max_attempts = 2\n" > /mnt/openvas.conf
+        # V45: Nessus-parity scanner defaults. plugins_timeout/scanner_plugins_timeout
+        # were 60/90 s, which killed the full-port Nmap NVT before it finished.
+        printf "table_driven_lsc = yes\nopenvasd_server = http://openvasd:80\nmax_hosts = %s\nmax_checks = %s\noptimize_test = %s\nplugins_timeout = %s\nscanner_plugins_timeout = %s\nchecks_read_timeout = %s\ntimeout_retry = %s\nopen_sock_max_attempts = %s\nsafe_checks = yes\nreport_host_details = yes\nexpand_vhosts = yes\ntest_empty_vhost = yes\n" "$${GVM_MAX_HOSTS}" "$${GVM_MAX_CHECKS}" "$${GVM_OPTIMIZE_TEST}" "$${PLUGINS_TIMEOUT_SEC}" "$${SCANNER_PLUGINS_TIMEOUT_SEC}" "$${GVM_CHECKS_READ_TIMEOUT}" "$${GVM_TIMEOUT_RETRY}" "$${GVM_OPEN_SOCK_MAX_ATTEMPTS}" > /mnt/openvas.conf
         sed "s/127/128/" /etc/openvas/openvas_log.conf | sed 's/gvm/openvas/' > /mnt/openvas_log.conf
         chmod 644 /mnt/openvas.conf /mnt/openvas_log.conf
         touch /var/log/openvas/openvas.log
@@ -237,6 +248,13 @@ services:
       retries: 40
       start_period: 120s
 
+
+  scanner-bootstrap:
+    build: ./scanner-agent
+    profiles: ["bootstrap"]
+    restart: "no"
+    entrypoint: ["python", "-m", "agent.bootstrap_control_plane"]
+
   scanner-agent:
     build: ./scanner-agent
     restart: unless-stopped
@@ -245,7 +263,8 @@ services:
       CENTRAL_API_URL: ${CENTRAL_API_URL}
       TENANT_SLUG: ${TENANT_SLUG}
 
-      AGENT_TOKEN_FILE: ${AGENT_TOKEN_FILE:-/app/.agent-token}
+      AGENT_TOKEN_FILE: ${AGENT_TOKEN_FILE:-/run/aetheris-agent/agent-token}
+      AGENT_INSTANCE_FILE: ${AGENT_INSTANCE_FILE:-/run/aetheris-agent/agent-instance-id}
       GVM_SOCKET_PATH: ${GVM_SOCKET_PATH:-/run/gvmd/gvmd.sock}
       GVM_USERNAME: ${GVM_USERNAME:-admin}
       GVM_PASSWORD: ${GVM_PASSWORD:-admin}
@@ -264,26 +283,36 @@ services:
       QUEUE_POLL_INTERVAL_SEC: ${QUEUE_POLL_INTERVAL_SEC:-3}
       MAX_CONCURRENT_SCAN_JOBS: ${MAX_CONCURRENT_SCAN_JOBS:-1}
       SCAN_IP_PARALLELISM: ${SCAN_IP_PARALLELISM:-auto}
-      SCAN_IP_MAX_PARALLELISM: ${SCAN_IP_MAX_PARALLELISM:-10}
+      SCAN_IP_MAX_PARALLELISM: ${SCAN_IP_MAX_PARALLELISM:-8}
+      SCAN_SLO_MIN_HOSTS_PER_HOUR: ${SCAN_SLO_MIN_HOSTS_PER_HOUR:-15}
+      SCAN_SLO_HOSTS_PER_HOUR: ${SCAN_SLO_HOSTS_PER_HOUR:-18}
+      SCAN_EXPECTED_HOST_MINUTES: ${SCAN_EXPECTED_HOST_MINUTES:-20}
       SCAN_CPU_THROTTLE_C: ${SCAN_CPU_THROTTLE_C:-84}
       SCAN_CPU_PAUSE_C: ${SCAN_CPU_PAUSE_C:-92}
       SCAN_HOST_TEMP_C: ${SCAN_HOST_TEMP_C:-}
-      SKIP_UNREACHABLE_TARGETS: ${SKIP_UNREACHABLE_TARGETS:-true}
+      SKIP_UNREACHABLE_TARGETS: ${SKIP_UNREACHABLE_TARGETS:-false}
       REACHABILITY_TIMEOUT_SEC: ${REACHABILITY_TIMEOUT_SEC:-0.5}
       REACHABILITY_WORKERS: ${REACHABILITY_WORKERS:-10}
       IP_SCAN_LOG_DIR: ${IP_SCAN_LOG_DIR:-/app/logs/ip}
-      SCANNER_PLUGINS_TIMEOUT_SEC: ${SCANNER_PLUGINS_TIMEOUT_SEC:-0}
-      PLUGINS_TIMEOUT_SEC: ${PLUGINS_TIMEOUT_SEC:-0}
+      SCANNER_PLUGINS_TIMEOUT_SEC: ${SCANNER_PLUGINS_TIMEOUT_SEC:-36000}
+      PLUGINS_TIMEOUT_SEC: ${PLUGINS_TIMEOUT_SEC:-320}
       GVM_OPEN_SOCK_MAX_ATTEMPTS: ${GVM_OPEN_SOCK_MAX_ATTEMPTS:-5}
       GVM_TIMEOUT_RETRY: ${GVM_TIMEOUT_RETRY:-3}
       GVM_CHECKS_READ_TIMEOUT: ${GVM_CHECKS_READ_TIMEOUT:-10}
-      GVM_MAX_HOSTS: ${GVM_MAX_HOSTS:-10}
-      GVM_MAX_CHECKS: ${GVM_MAX_CHECKS:-12}
+      GVM_MAX_HOSTS: ${GVM_MAX_HOSTS:-1}
+      GVM_MAX_CHECKS: ${GVM_MAX_CHECKS:-8}
       HIGH_PROGRESS_WARN_SEC: ${HIGH_PROGRESS_WARN_SEC:-300}
       MAX_SCAN_RUNTIME_SEC: ${MAX_SCAN_RUNTIME_SEC:-0}
       PORT_PROFILE: ${PORT_PROFILE:-full}
+      UDP_PROFILE: ${UDP_PROFILE:-priority}
+      UDP_PORT_RANGE: ${UDP_PORT_RANGE:-U:53,U:67-69,U:123,U:137-138,U:161-162,U:500,U:514,U:520,U:623,U:1434,U:1701,U:1812-1813,U:1900,U:4500,U:4789,U:5004,U:5060,U:5353,U:11211}
+      PORT_DISCOVERY_ENABLED: ${PORT_DISCOVERY_ENABLED:-true}
+      PORT_DISCOVERY_TIMEOUT_SEC: ${PORT_DISCOVERY_TIMEOUT_SEC:-0.25}
+      PORT_DISCOVERY_WORKERS: ${PORT_DISCOVERY_WORKERS:-32}
+      PORT_DISCOVERY_RANGE: ${PORT_DISCOVERY_RANGE:-T:21-23,T:25,T:53,T:80,T:81,T:88,T:110,T:111,T:135,T:139,T:143,T:389,T:443,T:445,T:465,T:587,T:631,T:993,T:995,T:1433,T:1521,T:1723,T:2049,T:3000,T:3306,T:3389,T:5432,T:5672,T:5900,T:5985,T:6379,T:6443,T:8080,T:8443,T:9000,T:9418,T:27017}
       GVM_REPORT_MIN_QOD: ${GVM_REPORT_MIN_QOD:-0}
       GVM_MIN_NVT_COUNT: ${GVM_MIN_NVT_COUNT:-10000}
+      GVM_FEED_LOAD_WAIT_MIN: ${GVM_FEED_LOAD_WAIT_MIN:-60}
       GVM_ALLOW_BARE_TASK_FALLBACK: ${GVM_ALLOW_BARE_TASK_FALLBACK:-false}
       GVM_OPTIMIZE_TEST: ${GVM_OPTIMIZE_TEST:-no}
       GVM_SAFE_CHECKS: ${GVM_SAFE_CHECKS:-yes}
@@ -291,15 +320,26 @@ services:
       GVM_TEST_EMPTY_VHOST: ${GVM_TEST_EMPTY_VHOST:-yes}
       VERIFY_TLS: ${VERIFY_TLS:-true}
       CENTRAL_API_TIMEOUT_SEC: ${CENTRAL_API_TIMEOUT_SEC:-0}
-      AGENT_VERSION: ${AGENT_VERSION:-1.2.19}
+      AGENT_VERSION: ${AGENT_VERSION:-1.5.1}
       SCANNER_ROLE: ${SCANNER_ROLE:-portable}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - gvm_gvmd_socket:/run/gvmd:ro
-      - ./scanner-agent/.agent-token:/app/.agent-token
+      # Mount a DIRECTORY, not a single file. This avoids Docker Desktop/WSL
+      # file-vs-directory bind state left behind by older scanner-agent containers.
+      - type: bind
+        source: ./scanner-agent/runtime
+        target: /run/aetheris-agent
+        bind:
+          create_host_path: false
       - ./scanner-agent/agent:/app/agent:ro
-      - ./.lan-fingerprint:/app/.lan-fingerprint:ro
+      - type: bind
+        source: ./.lan-fingerprint
+        target: /app/.lan-fingerprint
+        read_only: true
+        bind:
+          create_host_path: false
       - ./logs:/app/logs
     depends_on:
       gvmd:

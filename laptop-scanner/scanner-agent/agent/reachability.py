@@ -1,9 +1,9 @@
 """Fast host reachability probes for edge scan target filtering.
 
 Targets are probed concurrently so an unavailable IP cannot hold up the rest of
-an authorized subnet.  Closed/error ports are recorded and skipped; if every
-configured quick-probe port is unavailable the IP is omitted from OpenVAS and
-its worker capacity is immediately available to another IP.
+an authorized subnet.  Quick-probe failures are telemetry by default, not evidence that an authorized
+host is dead. Set SKIP_UNREACHABLE_TARGETS=true only when the operator explicitly
+accepts that coverage trade-off.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def host_reachable(host: str, *, ports: list[int] | None = None, timeout: float 
 
 def partition_targets(targets: list[str], *, job_id: str | None = None) -> dict[str, Any]:
     """Split targets concurrently into reachable and unreachable sets."""
-    enabled = _env_bool("SKIP_UNREACHABLE_TARGETS", True)
+    enabled = _env_bool("SKIP_UNREACHABLE_TARGETS", False)
     clean = [str(t).strip() for t in targets if str(t).strip()]
     if not enabled:
         for host in clean:

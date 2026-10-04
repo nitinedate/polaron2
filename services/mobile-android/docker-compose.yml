@@ -77,7 +77,7 @@ x-app-common: &app-common
     context: ./backend
     dockerfile: Dockerfile
     args:
-      TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu126}
+      TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}
   env_file:
     - .env
   environment:

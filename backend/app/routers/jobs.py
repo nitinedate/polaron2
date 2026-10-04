@@ -961,10 +961,35 @@ def mobile_artifact_board(
             "facebook_messages": "facebook",
             "linkedin_messages": "linkedin",
         }
+        # Theme/sticker .crypt14 files are stored in the same family as msgstore
+        # backups. Only names that contain msgstore are chat databases.
+        inventory_crypt = int(counts.get("whatsapp_encrypted_backups") or 0)
         for source_family, board_key in family_map.items():
+            if source_family == "whatsapp_encrypted_backups":
+                continue
             n = int(fam_counts.get(source_family) or 0)
             if n > int(counts.get(board_key) or 0):
                 counts[board_key] = n
+        msgstore_norm = 0
+        try:
+            from app.db.sql_helpers import fetchall as _crypt_fetchall
+
+            crypt_rows = _crypt_fetchall(
+                db,
+                """SELECT count(*)::int AS c FROM mobile_normalized_artifacts
+                   WHERE job_id=:jid
+                     AND COALESCE(data->>'artifact_family','') = 'whatsapp_encrypted_backups'
+                     AND (
+                       lower(COALESCE(data->>'name','')) LIKE '%msgstore%'
+                       OR lower(COALESCE(data->>'path','')) LIKE '%msgstore%'
+                     )""",
+                {"jid": job_id},
+            )
+            if crypt_rows:
+                msgstore_norm = int(crypt_rows[0].get("c") or 0)
+        except Exception:
+            msgstore_norm = 0
+        counts["whatsapp_encrypted_backups"] = max(inventory_crypt, msgstore_norm)
 
         # Deleted/recovered records are a separate examiner-facing count.  A live
         # family (for example whatsapp_messages) may contain rows explicitly marked
@@ -1000,10 +1025,10 @@ def mobile_artifact_board(
         wa_deleted_flagged = int(
             (normalized_analysis.get("by_family_state") or {}).get("whatsapp_messages::database_deleted") or 0
         )
+        # unverified crypt backups are application=whatsapp. They are not deleted chats.
         counts["whatsapp_deleted_messages"] = max(
             int(counts.get("whatsapp_deleted_messages") or 0),
             wa_deleted_flagged,
-            int(recovered_by_app.get("whatsapp") or 0),
         )
         app_deleted_map = {
             "telegram": "telegram_deleted", "signal": "signal_deleted",
@@ -1402,11 +1427,20 @@ def mobile_artifact_board(
             and int(val or 0) == 0
             and int(counts.get("whatsapp_encrypted_backups") or 0) > 0
         ):
-            description = (
-                f"No plaintext chat rows yet — {int(counts['whatsapp_encrypted_backups']):,} "
-                "encrypted msgstore backup(s) collected. Device key "
-                "(/data/data/com.whatsapp/files/key) is required to decrypt chats."
-            )
+            try:
+                from app.services.mobile_forensic.sqlite_counts import describe_whatsapp_key_gap
+
+                description = describe_whatsapp_key_gap(
+                    db,
+                    job_id,
+                    backup_count=int(counts["whatsapp_encrypted_backups"]),
+                )
+            except Exception:
+                description = (
+                    f"No plaintext chat rows yet — {int(counts['whatsapp_encrypted_backups']):,} "
+                    "encrypted msgstore backup(s) collected. Device key "
+                    "(/data/data/com.whatsapp/files/key) is required to decrypt chats."
+                )
         rows.append(
             {
                 "key": key,

@@ -10,10 +10,39 @@ import logging as _aetheris_v124_logging
 import os as _aetheris_v124_os
 from pathlib import Path as _AetherisV124Path
 import httpx as _aetheris_v124_httpx
+import uuid as _aetheris_uuid
 
 _aetheris_v124_log = _aetheris_v124_logging.getLogger("scanner_agent.auth_recovery")
 _AETHERIS_V124_RECOVERY_FILE = _AetherisV124Path("/app/.agent-recovery-token")
-_AETHERIS_V124_ACTIVE_FILE = _AetherisV124Path("/app/.agent-token")
+_AETHERIS_V124_ACTIVE_FILE = _AetherisV124Path(_aetheris_v124_os.getenv("AGENT_TOKEN_FILE") or "/run/aetheris-agent/agent-token")
+_AETHERIS_AGENT_INSTANCE_FILE = _AetherisV124Path(
+    _aetheris_v124_os.getenv("AGENT_INSTANCE_FILE") or "/run/aetheris-agent/agent-instance-id"
+)
+
+
+def _aetheris_agent_instance_id() -> str:
+    """Return a stable non-secret ownership id for queue fencing."""
+    value = (_aetheris_v124_os.getenv("AGENT_INSTANCE_ID") or "").strip()
+    if value:
+        return value[:128]
+    try:
+        if _AETHERIS_AGENT_INSTANCE_FILE.is_file():
+            value = _AETHERIS_AGENT_INSTANCE_FILE.read_text(encoding="utf-8-sig").strip()
+            if value:
+                value = value[:128]
+                _aetheris_v124_os.environ["AGENT_INSTANCE_ID"] = value
+                return value
+    except OSError:
+        pass
+    value = str(_aetheris_uuid.uuid4())
+    try:
+        _AETHERIS_AGENT_INSTANCE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _AETHERIS_AGENT_INSTANCE_FILE.write_text(value + "\n", encoding="utf-8")
+        _aetheris_v124_os.chmod(str(_AETHERIS_AGENT_INSTANCE_FILE), 0o600)
+    except OSError:
+        pass
+    _aetheris_v124_os.environ["AGENT_INSTANCE_ID"] = value
+    return value
 
 
 def _aetheris_v124_read_recovery_token():
@@ -233,9 +262,11 @@ class CentralApi:
         if base.lower().endswith("/api"):
             base = base[:-4].rstrip("/")
         self.base = base
+        self.agent_instance_id = _aetheris_agent_instance_id()
         self.headers = {
             "Authorization": f"Bearer {token}",
             "X-Tenant": tenant.strip().lower(),
+            "X-Aetheris-Agent-Instance": self.agent_instance_id,
             "Content-Type": "application/json",
         }
         self._token = token
@@ -324,18 +355,29 @@ class CentralApi:
             attempts=2,
         )
 
-    def heartbeat(self, *, version: str | None = None, openvas_ready: bool | None = None) -> dict[str, Any]:
+    def heartbeat(
+        self,
+        *,
+        version: str | None = None,
+        openvas_ready: bool | None = None,
+        detail: str | None = None,
+    ) -> dict[str, Any]:
         # Heartbeat must not stall the dispatcher for minutes on a slow WAN hop.
+        payload: dict[str, Any] = {"version": version, "openvas_ready": openvas_ready}
+        if detail:
+            payload["detail"] = str(detail)[:500]
         return self._request(
             "POST",
             "/api/scanner-agent/heartbeat",
-            json={"version": version, "openvas_ready": openvas_ready},
+            json=payload,
             attempts=3,
         )
 
     def next_job(self, *, active_job_ids: list[str] | None = None) -> dict[str, Any] | None:
         active = [str(x).strip() for x in (active_job_ids or []) if str(x).strip()]
-        params = {"active_job_ids": ",".join(active[:16])} if active else None
+        params: dict[str, Any] = {"agent_instance_id": self.agent_instance_id}
+        if active:
+            params["active_job_ids"] = ",".join(active[:16])
         data = self._request(
             "GET",
             "/api/scanner-agent/jobs/next",
@@ -349,6 +391,7 @@ class CentralApi:
             "PATCH",
             f"/api/scanner-agent/jobs/{job_id}",
             json=payload,
+            params={"agent_instance_id": self.agent_instance_id},
             attempts=5,
         )
 
@@ -357,5 +400,6 @@ class CentralApi:
             "POST",
             f"/api/scanner-agent/jobs/{job_id}/results",
             json=payload,
+            params={"agent_instance_id": self.agent_instance_id},
             attempts=8,
         )

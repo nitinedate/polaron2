@@ -1,15 +1,15 @@
-"""Laptop capacity probe for edge scan IP parallelism.
+"""Adaptive laptop capacity planner for edge vulnerability scans.
 
-The laptop scanner is network-bound for most of a VA run, so the scheduler keeps
-at least five independent one-IP OpenVAS tasks in flight during normal operation
-and scales higher while CPU/RAM/thermal headroom allows it.  A critical thermal
-or memory condition pauses *new* admissions rather than shrinking the semaphore
-below five; already-running OpenVAS tasks are never killed by the capacity probe.
+v1.3.5 targets a sustained 15-18 completed IPs/hour on a healthy 8-12+ core
+scanner without weakening evidence quality.  Each IP owns one OpenVAS task; the
+planner normally admits 5-6 tasks concurrently and reduces admission under
+thermal/memory pressure.  Existing tasks are never killed by this planner.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from typing import Any
@@ -19,12 +19,17 @@ log = logging.getLogger("scanner_agent.capacity")
 _last_probe: dict[str, Any] | None = None
 _last_probe_mono = 0.0
 
-# Operational floor requested for on-site IP parallelism.  This is an admission
-# floor while the host is healthy enough to accept new work, not a promise to
-# start work during a critical thermal emergency.
-IP_WORKERS_MIN = 5
-IP_WORKERS_MAX_DEFAULT = 10
-IP_WORKERS_MAX_HARD = 32
+IP_WORKERS_MIN = 4
+IP_WORKERS_MAX_DEFAULT = 6
+IP_WORKERS_MAX_HARD = 12
+
+
+def _env_float(name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        value = float(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(lo, min(hi, value))
 
 
 def _configured_max() -> int:
@@ -33,6 +38,29 @@ def _configured_max() -> int:
         return max(IP_WORKERS_MIN, min(IP_WORKERS_MAX_HARD, int(raw)))
     except (TypeError, ValueError):
         return IP_WORKERS_MAX_DEFAULT
+
+
+def throughput_target_hph() -> float:
+    return _env_float("SCAN_SLO_HOSTS_PER_HOUR", 18.0, 1.0, 120.0)
+
+
+def throughput_min_hph() -> float:
+    return _env_float("SCAN_SLO_MIN_HOSTS_PER_HOUR", 15.0, 1.0, throughput_target_hph())
+
+
+def expected_host_minutes() -> float:
+    return _env_float("SCAN_EXPECTED_HOST_MINUTES", 20.0, 2.0, 120.0)
+
+
+def required_workers_for_slo() -> int:
+    # Little's-law style sizing: concurrency ~= arrival/completion rate * service time.
+    required = math.ceil(throughput_target_hph() * expected_host_minutes() / 60.0)
+    return max(IP_WORKERS_MIN, min(_configured_max(), required))
+
+
+def projected_hosts_per_hour(workers: int) -> float:
+    minutes = expected_host_minutes()
+    return round(max(1, int(workers)) * 60.0 / minutes, 2)
 
 
 def _read_loadavg() -> float | None:
@@ -51,7 +79,6 @@ def _cpu_count() -> int:
 
 
 def _read_cpu_temp_c() -> float | None:
-    """Best-effort scanner-host CPU/chassis temperature."""
     raw_env = (os.environ.get("SCAN_HOST_TEMP_C") or "").strip()
     if raw_env:
         try:
@@ -59,8 +86,7 @@ def _read_cpu_temp_c() -> float | None:
         except ValueError:
             pass
     temps: list[float] = []
-    roots = ("/sys/class/thermal", "/sys/class/hwmon")
-    for root in roots:
+    for root in ("/sys/class/thermal", "/sys/class/hwmon"):
         if not os.path.isdir(root):
             continue
         try:
@@ -101,7 +127,6 @@ def _mem_available_gb() -> float | None:
 
 
 def _cpu_percent_sample(sample_sec: float = 0.35) -> float | None:
-    """Rough CPU busy % from /proc/stat (no psutil dependency)."""
     try:
         def _snap() -> tuple[int, int]:
             with open("/proc/stat", encoding="utf-8") as fh:
@@ -117,8 +142,7 @@ def _cpu_percent_sample(sample_sec: float = 0.35) -> float | None:
         di, dt = i2 - i1, t2 - t1
         if dt <= 0:
             return None
-        busy = 1.0 - (di / dt)
-        return max(0.0, min(100.0, busy * 100.0))
+        return max(0.0, min(100.0, (1.0 - di / dt) * 100.0))
     except Exception:
         return None
 
@@ -129,15 +153,12 @@ def ip_workers_for_cpu(
     mem_gb: float | None = None,
     explicit: str | None = None,
 ) -> int:
-    """Map host capacity to a 5+ one-IP OpenVAS semaphore.
+    """Choose stable one-IP OpenVAS concurrency for the 18 IP/hour SLO.
 
-    Auto policy is deliberately conservative for laptops while still allowing a
-    50-IP job to make progress quickly:
-      <=4 CPU -> 5, 5-8 -> 6, 9-12 -> 8, 13+ -> 10 (or configured ceiling).
-
-    Explicit values below five are raised to the required floor.  Critical RAM
-    is handled by ``admission_paused`` in :func:`probe_laptop_capacity` rather
-    than silently serializing to one worker.
+    Auto CPU envelope:
+      <=4 logical CPUs -> 4 tasks
+      5-8             -> 5 tasks
+      9+              -> up to the SLO requirement (normally 6)
     """
     ceiling = _configured_max()
     raw = (explicit if explicit is not None else (os.environ.get("SCAN_IP_PARALLELISM") or "auto")).strip().lower()
@@ -146,18 +167,15 @@ def ip_workers_for_cpu(
 
     n = max(1, int(cpus or 1))
     if n <= 4:
-        workers = 5
+        cpu_cap = 4
     elif n <= 8:
-        workers = 6
-    elif n <= 12:
-        workers = 8
+        cpu_cap = 5
     else:
-        workers = 10
-    return max(IP_WORKERS_MIN, min(ceiling, workers))
+        cpu_cap = ceiling
+    return max(IP_WORKERS_MIN, min(cpu_cap, required_workers_for_slo(), ceiling))
 
 
 def probe_laptop_capacity(*, force: bool = False) -> dict[str, Any]:
-    """Return live IP semaphore plan and admission state."""
     global _last_probe, _last_probe_mono
     now = time.monotonic()
     if not force and _last_probe is not None and (now - _last_probe_mono) < 5.0:
@@ -172,7 +190,7 @@ def probe_laptop_capacity(*, force: bool = False) -> dict[str, Any]:
     base_workers = ip_workers_for_cpu(cpus, mem_gb=mem_gb)
     ip_workers = base_workers
 
-    configured_jobs = max(1, min(8, int(os.environ.get("MAX_CONCURRENT_SCAN_JOBS") or 2)))
+    configured_jobs = max(1, min(8, int(os.environ.get("MAX_CONCURRENT_SCAN_JOBS") or 1)))
     max_jobs = configured_jobs
 
     throttle_c = float(os.environ.get("SCAN_CPU_THROTTLE_C") or 84)
@@ -200,8 +218,6 @@ def probe_laptop_capacity(*, force: bool = False) -> dict[str, Any]:
         or (mem_gb is not None and mem_gb < 2.5)
     )
 
-    # Keep >=5 permits whenever new work is allowed.  On critical pressure we
-    # pause new starts entirely; in-flight tasks finish and release naturally.
     admission_paused = False
     if critical:
         ip_workers = IP_WORKERS_MIN
@@ -213,12 +229,16 @@ def probe_laptop_capacity(*, force: bool = False) -> dict[str, Any]:
         max_jobs = 1
         thermal_state = "hot"
     elif warm:
-        ip_workers = max(IP_WORKERS_MIN, min(base_workers, 6))
-        max_jobs = min(max_jobs, 1)
+        ip_workers = max(IP_WORKERS_MIN, min(base_workers, 5))
+        max_jobs = 1
         thermal_state = "warm"
     else:
         thermal_state = "cool"
 
+    target_hph = throughput_target_hph()
+    min_hph = throughput_min_hph()
+    required_workers = required_workers_for_slo()
+    projected_hph = projected_hosts_per_hour(ip_workers)
     plan = {
         "cpu_count": cpus,
         "load_1m": load,
@@ -229,12 +249,18 @@ def probe_laptop_capacity(*, force: bool = False) -> dict[str, Any]:
         "ip_workers": ip_workers,
         "semaphore_limit": ip_workers,
         "max_concurrent_jobs": max_jobs,
-        "chunk_size": 1,  # exactly one IP owns one permit
+        "chunk_size": 1,
         "thermal_state": thermal_state,
         "hot": hot,
         "admission_paused": admission_paused,
         "operational_floor": IP_WORKERS_MIN,
         "configured_ceiling": _configured_max(),
+        "throughput_target_hph": target_hph,
+        "throughput_min_hph": min_hph,
+        "expected_host_minutes": expected_host_minutes(),
+        "required_workers_for_slo": required_workers,
+        "projected_hosts_per_hour": projected_hph,
+        "slo_at_risk": bool(projected_hph + 0.01 < min_hph),
     }
     _last_probe = dict(plan)
     _last_probe_mono = now

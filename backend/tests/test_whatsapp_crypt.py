@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from app.services.mobile_forensic.sqlite_counts import _is_whatsapp_msgstore_crypt
+from app.services.mobile_forensic.sqlite_counts import (
+    _is_whatsapp_msgstore_crypt,
+    whatsapp_key_gap_text,
+)
 from app.services.mobile_forensic.whatsapp_crypt import (
     cipher_key_from_material,
     looks_like_sqlite,
@@ -11,12 +14,18 @@ from app.services.mobile_forensic.whatsapp_crypt import (
 
 
 def test_cipher_key_from_whatsapp_keyfile() -> None:
-    keyfile = b"\x00" * 30 + bytes(range(32)) + b"\xff" * 96
+    # V45: the 158-byte Android key file holds the AES-256 key in its LAST 32
+    # bytes (offset 126). Offset 30 is the crypt12 "t1" header checksum; the
+    # pre-V45 reader used it as the key and could never decrypt a real backup.
+    keyfile = b"\xff" * 30 + b"\x11" * 32 + b"\xff" * 64 + bytes(range(32))
+    assert len(keyfile) == 158
     assert cipher_key_from_material(keyfile) == bytes(range(32))
+    assert cipher_key_from_material(b"\x00" * 30 + bytes(range(32)) + b"\xff" * 96) == b"\xff" * 32
     assert cipher_key_from_material(bytes(range(32))) == bytes(range(32))
     assert cipher_key_from_material(bytes(range(32)).hex()) == bytes(range(32))
     assert cipher_key_from_material("not-hex") is None
     assert cipher_key_from_material(b"short") is None
+    assert cipher_key_from_material(b"run-as: package not debuggable\n") is None
 
 
 def test_decrypt_passthrough_sqlite() -> None:
@@ -92,3 +101,16 @@ def test_msgstore_crypt_not_theme_sidecar() -> None:
         "WhatsApp/Backups/022_cricket_punjab_theme.webp.crypt14"
     )
     assert not _is_whatsapp_msgstore_crypt("WhatsApp/Media/IMG.jpg")
+
+
+def test_key_gap_explains_run_as_stub() -> None:
+    text = whatsapp_key_gap_text(
+        backup_count=15,
+        key_size=45,
+        key_head=b"run-as: package ",
+        empty_android_backup=True,
+    )
+    assert "15" in text
+    assert "run-as" in text
+    assert "whatsapp.ab" in text
+    assert "158" in text

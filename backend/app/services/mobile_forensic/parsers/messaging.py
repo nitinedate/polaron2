@@ -99,14 +99,15 @@ def _message_like_tables(conn) -> list[str]:
 
 class WhatsAppParser(ArtifactParser):
     name = "whatsapp_parser"
-    version = "2.0.0"
+    version = "2.1.0-v45"
     domains = ("messaging_apps",)
 
     def supports(self, item: InventoryItem, context: ParseContext) -> bool:
         p = item.path.lower().replace("\\", "/")
         name = PurePosixPath(p).name.lower()
+        # Theme and sticker sidecars are also .crypt14. Only msgstore holds chats.
         if name.endswith((".crypt12", ".crypt14", ".crypt15")):
-            return True
+            return "msgstore" in name
         if name.endswith(".enc") or ".sqlite.enc" in p:
             return False
         if name in {
@@ -133,6 +134,8 @@ class WhatsAppParser(ArtifactParser):
     def parse(self, item: InventoryItem, context: ParseContext) -> Iterator[NormalizedArtifact]:
         name = PurePosixPath(item.path).name.lower()
         if name.endswith((".crypt12", ".crypt14", ".crypt15")):
+            if "msgstore" not in name:
+                return
             key_present = bool(context.whatsapp_key_hex)
             yield NormalizedArtifact.create(
                 artifact_type="app_backup_encrypted",
@@ -173,6 +176,43 @@ class WhatsAppParser(ArtifactParser):
                     yield from self._parse_database_bytes(
                         decrypted, item, context, default_state="backup_historical", recovery_source="decrypted_backup"
                     )
+                    # V45: "Delete for me" rows only survive in freelist/WAL pages. The
+                    # generic deleted pipeline carves the *stored* artifact bytes, which
+                    # for a .crypt14/.crypt15 is ciphertext — run the carver on plaintext.
+                    try:
+                        from app.services.mobile_forensic.parsers.whatsapp_modern import iter_freelist_residuals
+
+                        yield from iter_freelist_residuals(decrypted, item, context)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        from app.services.mobile_forensic.whatsapp_crypt import last_decrypt_diagnostics
+
+                        diag = last_decrypt_diagnostics()
+                    except Exception:
+                        diag = {}
+                    yield NormalizedArtifact.create(
+                        artifact_type="app_backup_encrypted",
+                        source_domain="messaging_apps",
+                        data={
+                            "application": "whatsapp",
+                            "artifact_family": "whatsapp_encrypted_backups",
+                            "path": item.path,
+                            "decrypt_failed": True,
+                            "decrypt_diagnostics": diag,
+                            "note": "Decryption with the supplied key produced no SQLite payload — see decrypt_diagnostics",
+                        },
+                        state="unverified",
+                        recovery_source="encrypted_backup",
+                        source_path=item.path,
+                        source_sha256=item.sha256,
+                        parser=self.name,
+                        parser_version=self.version,
+                        confidence=Confidence(label="UNVERIFIED", score=0.2, validation=["decrypt_failed"]),
+                        job_id=context.job_id,
+                        source_id=context.source_id,
+                    )
             return
 
         data = context.read_artifact_bytes(item.path)
@@ -189,7 +229,7 @@ class WhatsAppParser(ArtifactParser):
             raw = context.read_artifact_bytes(item.path)
             if not raw or not context.whatsapp_key_hex:
                 return None
-            return try_decrypt_whatsapp_crypt(raw, context.whatsapp_key_hex)
+            return try_decrypt_whatsapp_crypt(raw, context.whatsapp_key_hex, path=item.path)
         except Exception:
             return None
 
@@ -205,6 +245,23 @@ class WhatsAppParser(ArtifactParser):
         with open_sqlite_bytes(data) as conn:
             if not conn:
                 return
+            # V45: modern Android msgstore (message/chat/jid/message_media/message_revoked)
+            # needs JID joins + revoked/quoted/FTS recovery; the generic column probe
+            # below returns integer chat ids, NULL media and 0 deleted on that schema.
+            try:
+                from app.services.mobile_forensic.parsers.whatsapp_modern import (
+                    is_modern_msgstore,
+                    iter_modern_whatsapp,
+                )
+
+                if is_modern_msgstore(conn):
+                    yield from iter_modern_whatsapp(
+                        conn, item, context, default_state=default_state, recovery_source=recovery_source
+                    )
+                    return
+            except Exception:
+                # Fall back to the generic probe rather than lose the database entirely.
+                pass
             tables = table_names(conn)
             yielded_any = False
 
@@ -502,6 +559,23 @@ class _GenericAppDbParser(ArtifactParser):
         with open_sqlite_bytes(data) as conn:
             if not conn:
                 return
+            # V45: modern Android msgstore (message/chat/jid/message_media/message_revoked)
+            # needs JID joins + revoked/quoted/FTS recovery; the generic column probe
+            # below returns integer chat ids, NULL media and 0 deleted on that schema.
+            try:
+                from app.services.mobile_forensic.parsers.whatsapp_modern import (
+                    is_modern_msgstore,
+                    iter_modern_whatsapp,
+                )
+
+                if is_modern_msgstore(conn):
+                    yield from iter_modern_whatsapp(
+                        conn, item, context, default_state=default_state, recovery_source=recovery_source
+                    )
+                    return
+            except Exception:
+                # Fall back to the generic probe rather than lose the database entirely.
+                pass
             tables = table_names(conn)
             msg_tables = _message_like_tables(conn)
             if msg_tables:
@@ -550,7 +624,7 @@ class _GenericAppDbParser(ArtifactParser):
 
 class TelegramParser(_GenericAppDbParser):
     name = "telegram_parser"
-    version = "2.0.0"
+    version = "2.1.0-v45"
     domains = ("messaging_apps",)
     app_name = "telegram"
     path_markers = ("telegram", "org.telegram", "nickname.db", "cache4.db")
@@ -558,7 +632,7 @@ class TelegramParser(_GenericAppDbParser):
 
 class SignalParser(_GenericAppDbParser):
     name = "signal_parser"
-    version = "2.0.0"
+    version = "2.1.0-v45"
     domains = ("messaging_apps",)
     app_name = "signal"
     path_markers = ("signal", "org.thoughtcrime.securesms")

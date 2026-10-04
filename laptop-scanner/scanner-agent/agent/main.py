@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 import time
 
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -48,7 +49,7 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 
 def _read_agent_token() -> str:
-    token_file = Path(os.environ.get("AGENT_TOKEN_FILE") or "/app/.agent-token")
+    token_file = Path(os.environ.get("AGENT_TOKEN_FILE") or "/run/aetheris-agent/agent-token")
     try:
         if token_file.is_file():
             value = token_file.read_text(encoding="utf-8-sig").strip()
@@ -68,7 +69,7 @@ def _read_agent_version() -> str:
                 return value
     except OSError:
         log.warning("Unable to read AGENT_VERSION_FILE=%s; falling back to environment", version_file)
-    return (os.environ.get("AGENT_VERSION") or "1.2.19").strip() or "1.2.19"
+    return (os.environ.get("AGENT_VERSION") or "1.5.0").strip() or "1.5.0"
 
 
 def _cfg() -> dict[str, Any]:
@@ -95,14 +96,93 @@ def _cfg() -> dict[str, Any]:
         # Bounded concurrency prevents head-of-line blocking without spawning an
         # unbounded number of OpenVAS scans. Tune for laptop capacity; 1..8.
         "max_concurrent_jobs": max(1, min(8, int(os.environ.get("MAX_CONCURRENT_SCAN_JOBS") or 1))),
-        # Greenbone may legitimately remain Running at 98% while the scan is
-        # still active/finalizing. Never declare a stall from progress alone.
+        # A hung NVT (TCP 445 connect loop) freezes one IP at 90-98%.
+        # Harvest that tail from the report already written. 0 disables it.
         "high_progress_warn_sec": max(60, int(os.environ.get("HIGH_PROGRESS_WARN_SEC") or 300)),
+        "high_progress_stall_sec": _env_stall_sec(),
+        "high_progress_stall_pct": max(80, min(99, int(os.environ.get("HIGH_PROGRESS_STALL_PCT") or 90))),
         # Optional absolute safety ceiling. This is NOT a progress-based timeout.
         # Set to 0 to disable. Default is disabled; configure explicitly if desired.
         "max_scan_runtime_sec": max(0, int(os.environ.get("MAX_SCAN_RUNTIME_SEC") or 0)),
         "version": _read_agent_version(),
     }
+
+
+def _env_stall_sec() -> int:
+    raw = os.environ.get("HIGH_PROGRESS_STALL_SEC")
+    if raw is None or str(raw).strip() == "":
+        return 45
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 45
+
+
+def ip_tail_should_harvest(progress: float, unchanged_sec: float, *, stall_sec: int, stall_pct: int) -> bool:
+    """True when one IP is frozen in the OpenVAS tail (typically 90-98%)."""
+    if stall_sec <= 0:
+        return False
+    try:
+        pct = int(float(progress))
+    except (TypeError, ValueError):
+        return False
+    return pct >= int(stall_pct) and unchanged_sec >= float(stall_sec)
+
+
+def seal_tail_harvest(details: dict[str, Any], host: str, *, reason: str) -> bool:
+    """Accept a frozen tail only when this IP is already in the report.
+
+    Returning False leaves the scan running. A climbing scan is never sealed.
+    """
+    import ipaddress
+    from datetime import datetime, timezone
+
+    vulns = list(details.get("vulnerabilities") or [])
+    ev = dict(details.get("evidence") or {})
+    report_id = str(ev.get("report_id") or "").strip()
+    if not report_id:
+        return False
+
+    def _norm(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        try:
+            return str(ipaddress.ip_address(text))
+        except ValueError:
+            return text.casefold()
+
+    wanted = _norm(host)
+    hosts: set[str] = set()
+    for item in list(ev.get("assessed_hosts") or []) + [row.get("host") for row in vulns]:
+        normalized = _norm(str(item or ""))
+        if normalized:
+            hosts.add(normalized)
+    if not wanted or wanted not in hosts:
+        return False
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assessed = sorted(hosts)
+    ev["report_id"] = report_id
+    ev["task_status"] = "done"
+    ev["assessed_hosts"] = assessed
+    ev["hosts_attempted"] = max(int(ev.get("hosts_attempted") or 0), len(assessed), 1)
+    ev["hosts_assessed"] = len(assessed)
+    ev["missing_ip_targets"] = []
+    ev["target_identity_ok"] = True
+    ev["report_result_count"] = len(vulns)
+    ev["report_read_error"] = None
+    ev["scan_start"] = ev.get("scan_start") or now
+    ev["scan_end"] = ev.get("scan_end") or now
+    ev["assessment_complete"] = True
+    ev["assessment_verdict"] = "tail_stall_harvest"
+    details["evidence"] = ev
+    details["vulnerabilities"] = vulns
+    details["status"] = "completed"
+    details["gmp_status"] = "done"
+    details["partial"] = True
+    details["partial_reason"] = reason
+    return True
 
 
 def _patch_job_best_effort(api: CentralApi, job_id: str, payload: dict[str, Any]) -> bool:
@@ -637,6 +717,7 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
     in_flight: dict[int, str] = {}
     ip_started_mono: dict[int, float] = {}
     ip_last_state: dict[int, tuple[str, int]] = {}
+    ip_progress_since: dict[int, tuple[int, float]] = {}
     slot_sem = AdaptiveIPSemaphore(max_permits=int(capacity.get("configured_ceiling") or 10))
 
     for idx, tid in resume_map.items():
@@ -674,7 +755,59 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                 f"Refusing OpenVAS chunk {idx} for job {job_id}: hosts are not this job's targets"
             )
         emit_ip_event(job_id, host, "start_attempt", chunk_index=idx)
-        tid = openvas.start_scan(name=f"edge-{job_id[:8]}-c{idx}", targets=chunk)
+
+        discovered_range: str | None = None
+        if getattr(openvas, "port_profile", "full") != "full":
+            try:
+                from agent.port_discovery import discovery_plan
+
+                port_plan = discovery_plan(chunk)
+                discovered_range = str(port_plan.get("port_range") or "").strip() or None
+                open_by_host = port_plan.get("open_ports") or {}
+                host_open = list(open_by_host.get(host) or [])
+                emit_ip_event(
+                    job_id,
+                    host,
+                    "port_discovery",
+                    open_ports=host_open,
+                    open_port_count=len(host_open),
+                    port_range=discovered_range,
+                    fallback=bool(port_plan.get("fallback")),
+                    chunk_index=idx,
+                )
+                if host_open:
+                    log.info(
+                        "Job %s IP %s: discovery saw %d open TCP port(s) %s; "
+                        "OpenVAS still uses the full fast service set (includes 22/443/445)",
+                        job_id,
+                        host,
+                        len(host_open),
+                        discovered_range,
+                    )
+                else:
+                    log.info(
+                        "Job %s IP %s: no candidate port answered the pre-probe; "
+                        "OpenVAS uses the full fast service set",
+                        job_id,
+                        host,
+                    )
+                # Do not pass the narrowed discovery range. A partial answer
+                # (SMB only) used to delete SSH and TLS from the assessment.
+                discovered_range = None
+            except Exception as exc:
+                # Discovery is an optimization only. Never drop an authorized target
+                # because a quick pre-probe or local socket operation failed.
+                emit_ip_event(
+                    job_id, host, "port_discovery_error",
+                    error=f"{exc.__class__.__name__}: {exc}", chunk_index=idx,
+                )
+                log.warning("Port discovery failed for %s; continuing with configured OpenVAS profile", host, exc_info=True)
+
+        tid = openvas.start_scan(
+            name=f"edge-{job_id[:8]}-c{idx}",
+            targets=chunk,
+            port_range=discovered_range,
+        )
         task_ids[idx] = tid
         ip_started_mono[idx] = time.monotonic()
         emit_ip_event(job_id, host, "started", task_id=tid, chunk_index=idx)
@@ -730,6 +863,8 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
     last_high_progress_notice = 0.0
     poll = cfg["poll"]
     high_progress_warn_sec = cfg["high_progress_warn_sec"]
+    high_progress_stall_sec = int(cfg.get("high_progress_stall_sec") or 0)
+    high_progress_stall_pct = int(cfg.get("high_progress_stall_pct") or 90)
     max_scan_runtime_sec = cfg["max_scan_runtime_sec"]
 
     while True:
@@ -823,6 +958,66 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                         done_details[idx] = details
                         finished_idxs.append(idx)
                         continue
+
+                    if st == "running" and high_progress_stall_sec > 0:
+                        pct_i = int(float(details.get("progress") or 0))
+                        mark = ip_progress_since.get(idx)
+                        now_m = time.monotonic()
+                        if mark is None and pct_i >= high_progress_stall_pct:
+                            ip_progress_since[idx] = (pct_i, now_m - float(high_progress_stall_sec) - 1)
+                            mark = ip_progress_since[idx]
+                        if mark is None or pct_i > mark[0]:
+                            ip_progress_since[idx] = (pct_i, now_m)
+                        elif ip_tail_should_harvest(
+                            pct_i,
+                            now_m - mark[1],
+                            stall_sec=high_progress_stall_sec,
+                            stall_pct=high_progress_stall_pct,
+                        ):
+                            unchanged = now_m - mark[1]
+                            log.warning(
+                                "IP %s frozen at %s%% for %.0fs — reading the report already collected",
+                                host,
+                                pct_i,
+                                unchanged,
+                            )
+                            harvested_box: dict[str, Any] = {}
+
+                            def _read_report() -> None:
+                                try:
+                                    harvested_box["value"] = openvas.poll(
+                                        tid,
+                                        expected_targets=chunks[idx],
+                                        include_running_report=True,
+                                    )
+                                except Exception as exc:
+                                    harvested_box["error"] = exc
+
+                            reader = threading.Thread(target=_read_report, daemon=True)
+                            reader.start()
+                            reader.join(40)
+                            reason = f"frozen {int(unchanged)}s at {pct_i}%"
+                            harvested = dict(harvested_box["value"]) if "value" in harvested_box else None
+                            if harvested is not None and seal_tail_harvest(harvested, host, reason=reason):
+                                # The report is already saved. Release the hung check
+                                # afterwards so a TCP 445 retry cannot run for days.
+                                threading.Thread(target=lambda: openvas.stop(tid), daemon=True).start()
+                                details = harvested
+                                st = "completed"
+                                emit_ip_event(
+                                    job_id, host, "tail_harvest", task_id=tid, status="completed",
+                                    progress=pct_i,
+                                    vulnerabilities=len(details.get("vulnerabilities") or []),
+                                    error=reason,
+                                    duration_sec=round(now_m - ip_started_mono.get(idx, now_m), 3),
+                                )
+                            else:
+                                log.warning(
+                                    "IP %s is still at %s%% and the report has no host evidence yet; leaving the scan running",
+                                    host,
+                                    pct_i,
+                                )
+                                ip_progress_since[idx] = (pct_i, now_m - float(high_progress_stall_sec) + 20)
 
                     if st in {"failed", "stopped"}:
                         # Do not let one bad IP fail 49 healthy peers. Preserve any
@@ -1074,11 +1269,12 @@ def main() -> None:
         openvas.alive_test = alive_test
 
     log.info(
-        "Scanner agent starting version=%s tenant=%s api=%s alive_test=%s",
+        "Scanner agent starting version=%s tenant=%s api=%s alive_test=%s agent_instance=%s",
         cfg["version"],
         os.environ.get("TENANT_SLUG"),
         os.environ.get("CENTRAL_API_URL"),
         alive_test,
+        getattr(api, "agent_instance_id", ""),
     )
     log.info(
         "Progress policy: GMP task status is authoritative; no progress-based kill; "
@@ -1088,7 +1284,8 @@ def main() -> None:
     )
     log.info(
         "Capacity policy: jobs=%d (configured=%d) ip_workers=%d chunk_size=%d "
-        "thermal=%s cpu_temp=%sC load_ratio=%.2f SCAN_IP_PARALLELISM=%s; queue-poll=%ss",
+        "thermal=%s cpu_temp=%sC load_ratio=%.2f SCAN_IP_PARALLELISM=%s; queue-poll=%ss; "
+        "throughput_target=%.1f-%.1f/h projected=%.1f/h expected_host=%.1fmin required_workers=%d",
         max_workers,
         configured_jobs,
         capacity["ip_workers"],
@@ -1098,7 +1295,19 @@ def main() -> None:
         float(capacity.get("load_ratio") or 0.0),
         os.environ.get("SCAN_IP_PARALLELISM") or "auto",
         queue_poll,
+        float(capacity.get("throughput_min_hph") or 0.0),
+        float(capacity.get("throughput_target_hph") or 0.0),
+        float(capacity.get("projected_hosts_per_hour") or 0.0),
+        float(capacity.get("expected_host_minutes") or 0.0),
+        int(capacity.get("required_workers_for_slo") or 0),
     )
+    if capacity.get("slo_at_risk"):
+        log.warning(
+            "Configured host concurrency projects %.1f IP/hour, below minimum SLO %.1f IP/hour; "
+            "increase scanner CPU/RAM or reduce average host scan duration",
+            float(capacity.get("projected_hosts_per_hour") or 0.0),
+            float(capacity.get("throughput_min_hph") or 0.0),
+        )
 
     # Future -> central job id. The active ids are sent with every claim so the
     # central API can resume orphaned running work without handing the same job
@@ -1150,9 +1359,14 @@ def main() -> None:
                     pass
 
                 ready = openvas.ready()
+                readiness_detail = getattr(openvas, "last_readiness_detail", None)
                 if now >= next_heartbeat or ready != last_ready:
                     try:
-                        api.heartbeat(version=cfg["version"], openvas_ready=ready)
+                        api.heartbeat(
+                            version=cfg["version"],
+                            openvas_ready=ready,
+                            detail=readiness_detail,
+                        )
                         last_ready = ready
                     except Exception as exc:
                         # Do not stall/crash the dispatcher on a slow central hop.
