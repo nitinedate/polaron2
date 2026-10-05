@@ -735,10 +735,11 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
     task_ids: list[str | None] = [None] * len(chunks)
     done_details: dict[int, dict[str, Any]] = {}
     pending: list[int] = list(range(len(chunks)))
-    # V45.4: one automatic re-run per chunk when the report proves the port
-    # scanner never finished (truncated scan reported as Done).
+    # A truncated port scan is reported incomplete. Re-running the same host
+    # repeats the same Nmap kill, so the automatic re-run is off unless
+    # SCAN_DEGRADED_RETRY is set.
     degraded_retries: dict[int, int] = {}
-    degraded_retry_budget = max(0, int(os.environ.get("SCAN_DEGRADED_RETRY") or 1))
+    degraded_retry_budget = max(0, int(os.environ.get("SCAN_DEGRADED_RETRY") or 0))
     in_flight: dict[int, str] = {}
     ip_started_mono: dict[int, float] = {}
     ip_last_state: dict[int, tuple[str, int]] = {}
@@ -1085,7 +1086,7 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                                 continue
                             if cov_verdict.startswith("degraded"):
                                 log.error(
-                                    "Job %s IP %s: scan INCOMPLETE after retry (%s) — %s",
+                                    "Job %s IP %s: scan INCOMPLETE (%s) — %s",
                                     job_id, host, cov_verdict, cov.get("reason"),
                                 )
                                 emit_ip_event(
@@ -1343,7 +1344,7 @@ def main() -> None:
         from agent import AGENT_BUILD
     except Exception:
         AGENT_BUILD = "unknown"
-    degraded_retry = int(os.environ.get("SCAN_DEGRADED_RETRY") or 1)
+    degraded_retry = int(os.environ.get("SCAN_DEGRADED_RETRY") or 0)
     log.info(
         "AGENT BUILD %s | port_profile=%s udp_profile=%s plugins_timeout=%ss scanner_plugins_timeout=%ss "
         "optimize_test=%s max_checks=%s coverage_guard=on degraded_retry=%d",

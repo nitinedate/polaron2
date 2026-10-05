@@ -6,7 +6,7 @@ echo  Aetheris laptop scanner - deploy V45.4 (coverage guard)
 echo ============================================================
 echo.
 echo [0] Sanity: is THIS folder the V45.4 package?
-findstr /C:"AGENT_BUILD = \"1.5.1-v45.4\"" scanner-agent\agent\__init__.py >nul || (
+findstr /C:"AGENT_BUILD = \"1.5.1-v45.5\"" scanner-agent\agent\__init__.py >nul || (
   echo   FAIL: scanner-agent\agent\__init__.py has no V45.4 build stamp.
   echo         You are running this from an old folder. Unzip laptop-scanner_v45_full.zip over this folder first.
   pause & exit /b 2
@@ -34,7 +34,7 @@ echo.
 echo [3] openvas.conf inside the scanner ^(expect plugins_timeout = 320, scanner_plugins_timeout = 36000^):
 docker compose exec -T openvas cat /etc/openvas/openvas.conf
 echo.
-echo [4] Agent startup banner ^(expect "AGENT BUILD 1.5.1-v45.4 ... scanner_plugins_timeout=36000s coverage_guard=on"^):
+echo [4] Agent startup banner ^(expect "AGENT BUILD 1.5.1-v45.5 ... scanner_plugins_timeout=36000s coverage_guard=on"^):
 docker compose logs --tail 300 scanner-agent 2>nul | findstr /C:"AGENT BUILD" /C:"DEGRADED SCAN CONFIG" /C:"OpenVAS quality profile"
 echo.
 echo ------------------------------------------------------------

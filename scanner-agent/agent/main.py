@@ -735,10 +735,11 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
     task_ids: list[str | None] = [None] * len(chunks)
     done_details: dict[int, dict[str, Any]] = {}
     pending: list[int] = list(range(len(chunks)))
-    # V45.4: one automatic re-run per chunk when the report proves the port
-    # scanner never finished (truncated scan reported as Done).
+    # A truncated port scan is reported incomplete. Re-running the same host
+    # repeats the same Nmap kill, so the automatic re-run is off unless
+    # SCAN_DEGRADED_RETRY is set.
     degraded_retries: dict[int, int] = {}
-    degraded_retry_budget = max(0, int(os.environ.get("SCAN_DEGRADED_RETRY") or 1))
+    degraded_retry_budget = max(0, int(os.environ.get("SCAN_DEGRADED_RETRY") or 0))
     in_flight: dict[int, str] = {}
     ip_started_mono: dict[int, float] = {}
     ip_last_state: dict[int, tuple[str, int]] = {}
@@ -988,9 +989,9 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                         pct_i = int(float(details.get("progress") or 0))
                         mark = ip_progress_since.get(idx)
                         now_m = time.monotonic()
-                        if mark is None and pct_i >= high_progress_stall_pct:
-                            ip_progress_since[idx] = (pct_i, now_m - float(high_progress_stall_sec) - 1)
-                            mark = ip_progress_since[idx]
+                        # Clock starts when this percent is first seen. Backdating
+                        # made a live 94% look frozen and harvested the port scan
+                        # before Nmap had written any ports.
                         if mark is None or pct_i > mark[0]:
                             ip_progress_since[idx] = (pct_i, now_m)
                         elif ip_tail_should_harvest(
@@ -1023,7 +1024,19 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                             reader.join(40)
                             reason = f"frozen {int(unchanged)}s at {pct_i}%"
                             harvested = dict(harvested_box["value"]) if "value" in harvested_box else None
-                            if harvested is not None and seal_tail_harvest(harvested, host, reason=reason):
+                            cov_verdict = ""
+                            if harvested is not None:
+                                cov = ((harvested.get("evidence") or {}).get("host_coverage") or {}).get(host) or {}
+                                cov_verdict = str(cov.get("verdict") or "")
+                            if cov_verdict.startswith("degraded"):
+                                log.warning(
+                                    "IP %s is at %s%% and the port scan is still unfinished (%s); leaving the scan running",
+                                    host,
+                                    pct_i,
+                                    cov_verdict,
+                                )
+                                ip_progress_since[idx] = (pct_i, now_m)
+                            elif harvested is not None and seal_tail_harvest(harvested, host, reason=reason):
                                 # The report is already saved. Release the hung check
                                 # afterwards so a TCP 445 retry cannot run for days.
                                 threading.Thread(target=lambda: openvas.stop(tid), daemon=True).start()
@@ -1085,7 +1098,7 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                                 continue
                             if cov_verdict.startswith("degraded"):
                                 log.error(
-                                    "Job %s IP %s: scan INCOMPLETE after retry (%s) — %s",
+                                    "Job %s IP %s: scan INCOMPLETE (%s) — %s",
                                     job_id, host, cov_verdict, cov.get("reason"),
                                 )
                                 emit_ip_event(
@@ -1343,7 +1356,7 @@ def main() -> None:
         from agent import AGENT_BUILD
     except Exception:
         AGENT_BUILD = "unknown"
-    degraded_retry = int(os.environ.get("SCAN_DEGRADED_RETRY") or 1)
+    degraded_retry = int(os.environ.get("SCAN_DEGRADED_RETRY") or 0)
     log.info(
         "AGENT BUILD %s | port_profile=%s udp_profile=%s plugins_timeout=%ss scanner_plugins_timeout=%ss "
         "optimize_test=%s max_checks=%s coverage_guard=on degraded_retry=%d",

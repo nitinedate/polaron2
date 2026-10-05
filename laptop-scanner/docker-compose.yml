@@ -92,6 +92,23 @@ services:
       pg-gvm-migrator:
         condition: service_completed_successfully
 
+  # gvmd enforces NVT timeouts from nvt_preferences, not openvas.conf.
+  # A feed sync can put the old 60s/90s floors back; this loop raises them
+  # again so the Nmap port scanner is not killed before the sweep finishes.
+  sync-scanner-timeouts:
+    image: registry.community.greenbone.net/community/gvmd:stable
+    restart: unless-stopped
+    environment:
+      PLUGINS_TIMEOUT_SEC: ${PLUGINS_TIMEOUT_SEC:-320}
+      SCANNER_PLUGINS_TIMEOUT_SEC: ${SCANNER_PLUGINS_TIMEOUT_SEC:-36000}
+    volumes:
+      - gvm_psql_socket:/var/run/postgresql
+      - ./scripts/sync-scanner-timeouts.sh:/sync-scanner-timeouts.sh:ro
+    entrypoint: ["/bin/sh", "/sync-scanner-timeouts.sh"]
+    depends_on:
+      pg-gvm:
+        condition: service_started
+
   gvmd:
     image: registry.community.greenbone.net/community/gvmd:stable
     restart: on-failure
