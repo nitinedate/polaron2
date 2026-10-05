@@ -22,6 +22,22 @@ FAST_PORTS = (
     "T:8080,T:8443,T:9000,T:9418,T:27017"
 )
 
+# Nessus-style vulnerability ports. Every IP uses this set when PORT_PROFILE=vuln.
+# Dropped from the fast list because they produce informational results only
+# (service banners, name lookups) and no vulnerability severity: 81, 88, 631,
+# 1723, 3000, 5672, 9000, 9418. SSH, TLS, SMB, databases, RDP and the admin
+# web ports stay, because those are where low/medium/high/critical findings are.
+VULN_PORTS = (
+    "T:21-23,T:25,T:53,T:80,T:110,T:111,T:135,T:139,T:143,T:389,"
+    "T:443,T:445,T:465,T:587,T:993,T:995,T:1433,T:1521,T:2049,"
+    "T:3306,T:3389,T:5432,T:5900,T:5985-5986,T:6379,T:6443,"
+    "T:8080,T:8443,T:9200,T:27017"
+)
+# UDP that can carry a real severity. NTP, NetBIOS, SSDP and mDNS are omitted:
+# they are informational and they make Nmap wait on timeouts.
+VULN_UDP_PORTS = "U:161,U:623,U:11211"
+_VULN_PROFILES = frozenset({"vuln", "nexus", "nessus"})
+
 # High-value UDP services commonly relevant to infrastructure/IP assessment.
 # GMP port_range requires each comma-separated range to carry T:/U: explicitly.
 # Full UDP (1-65535) remains available through UDP_PROFILE=full, but is not the
@@ -68,8 +84,15 @@ def _with_udp_range(tcp_range: str, udp_profile: str | None = None) -> str:
 
 
 def _default_scan_port_range(port_profile: str, udp_profile: str | None = None) -> str:
-    tcp = "T:1-65535" if str(port_profile or "").strip().lower() == "full" else FAST_PORTS
-    return _with_udp_range(tcp, udp_profile)
+    profile = str(port_profile or "").strip().lower()
+    if profile == "full":
+        return _with_udp_range("T:1-65535", udp_profile)
+    if profile in _VULN_PROFILES:
+        # The catalog is vuln_ports.json. Do not append UDP_PORT_RANGE.
+        from agent.vuln_ports import gmp_range
+
+        return gmp_range()
+    return _with_udp_range(FAST_PORTS, udp_profile)
 
 def _report_filter_string(*, first: int | None = None, rows: int | None = None) -> str:
     """Fetch Greenbone results. Default is the full set (rows=-1)."""
@@ -1065,6 +1088,60 @@ def _harvest_report_xml(gmp: Any, report_id: str) -> tuple[Any | None, list[dict
     return meta, vulns, last_exc
 
 
+def _coverage_includes_parsed_results(evidence: dict[str, Any], vulns: list[dict[str, Any]]) -> None:
+    """Fold paged findings into the coverage verdict.
+
+    The metadata report is only the first result row, so a finished host can be
+    marked ``degraded_no_ports`` with "0 NVTs" while the parsed report already
+    holds hostname, traceroute, and OS rows. A completed task with no scanner
+    error and no open service port is a finished scan, not an incomplete one.
+    """
+    coverage = evidence.get("host_coverage")
+    if not isinstance(coverage, dict) or not coverage:
+        return
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in vulns:
+        host = str(row.get("host") or "").strip()
+        if host:
+            grouped.setdefault(host, []).append(row)
+    hosts = [host for host, cov in coverage.items() if isinstance(cov, dict)]
+    status = str(evidence.get("task_status") or evidence.get("scan_run_status") or "").lower()
+    finished = status in {"done", "finished", "succeeded", "completed"}
+    scanner_failed = int(evidence.get("plugin_error_count") or 0) > 0
+    for host, cov in coverage.items():
+        if not isinstance(cov, dict):
+            continue
+        rows = list(grouped.get(str(host).strip(), []))
+        if not rows and len(hosts) == 1:
+            rows = list(vulns)
+        tcp = {int(p) for p in (cov.get("open_tcp_ports") or []) if str(p).isdigit()}
+        udp = {int(p) for p in (cov.get("open_udp_ports") or []) if str(p).isdigit()}
+        for row in rows:
+            port = row.get("port")
+            proto = str(row.get("protocol") or "").lower()
+            if isinstance(port, int) and 1 <= port <= 65535:
+                (udp if proto == "udp" else tcp).add(port)
+        launched = max(int(cov.get("nvts_launched") or 0), len(rows))
+        cov["open_tcp_ports"] = sorted(tcp)[:512]
+        cov["open_udp_ports"] = sorted(udp)[:128]
+        cov["nvts_launched"] = launched
+        if str(cov.get("verdict") or "") != "degraded_no_ports":
+            continue
+        if cov.get("port_scanner_errors") or scanner_failed:
+            cov["reason"] = (
+                f"no open ports enumerated and only {launched} NVT(s) ran — "
+                "host filtered, scanner timed out, or feed not loaded"
+            )
+            continue
+        scored = any(
+            str(row.get("severity") or "").lower() not in {"", "info", "log", "none"}
+            for row in rows
+        )
+        if finished or tcp or udp or scored or launched >= 30:
+            cov["verdict"] = "full"
+            cov["reason"] = f"{len(tcp)} TCP / {len(udp)} UDP port(s), {launched} NVT(s) ran"
+
+
 def _report_payload(
     gmp: Any,
     task_id: str,
@@ -1178,6 +1255,7 @@ def _report_payload(
         evidence["report_read_error"] = (
             ((evidence.get("report_read_error") or "") + ("; " if evidence.get("report_read_error") else "") + err)[:1000]
         )
+    _coverage_includes_parsed_results(evidence, vulns)
     extra_hosts = {
         str(row.get("host") or "").strip()
         for row in vulns
@@ -1233,14 +1311,14 @@ class LocalOpenVAS:
         configured_checks = max(1, int(os.environ.get("GVM_MAX_CHECKS") or 8))
         self.max_hosts = max(1, int(os.environ.get("GVM_MAX_HOSTS") or 1))
         self.max_checks = min(configured_checks, 16)
-        full_defaults = self.port_profile == "full"
-        read_raw = max(1, int(os.environ.get("GVM_CHECKS_READ_TIMEOUT") or (10 if full_defaults else 5)))
-        retry_raw = max(0, int(os.environ.get("GVM_TIMEOUT_RETRY") or (3 if full_defaults else 1)))
-        sock_raw = max(1, int(os.environ.get("GVM_OPEN_SOCK_MAX_ATTEMPTS") or (5 if full_defaults else 2)))
-        # Fast mode keeps the old aggressive socket caps for throughput. Full
-        # assessment mode honors the configured retry/read values so slow SMB,
-        # SSH, TLS and appliance services are not prematurely abandoned.
-        if self.max_hosts <= 1 and self.port_profile != "full":
+        assessment = self.port_profile == "full" or self.port_profile in _VULN_PROFILES
+        read_raw = max(1, int(os.environ.get("GVM_CHECKS_READ_TIMEOUT") or (10 if assessment else 5)))
+        retry_raw = max(0, int(os.environ.get("GVM_TIMEOUT_RETRY") or (3 if assessment else 1)))
+        sock_raw = max(1, int(os.environ.get("GVM_OPEN_SOCK_MAX_ATTEMPTS") or (5 if assessment else 2)))
+        # The short fast profile keeps the aggressive socket caps. The
+        # Nessus-style catalog uses the configured read and retry budget so
+        # SMB, SSH, TLS, and database checks are not abandoned early.
+        if self.max_hosts <= 1 and not assessment:
             read_raw = min(read_raw, 5)
             retry_raw = min(retry_raw, 1)
             sock_raw = min(sock_raw, 2)

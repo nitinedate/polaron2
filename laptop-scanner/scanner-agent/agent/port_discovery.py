@@ -2,10 +2,9 @@
 
 The purpose is not to decide whether an authorized host is alive.  It records
 which candidate service ports answer so the scan log can show them.  The
-OpenVAS task still uses the full fast service set (SSH, TLS, SMB, and the
-other site-VA ports).  A 250ms probe that only sees 135/139/445 must not drop
-22 and 443, or the SSL and SSH findings a Nessus site assessment reports
-cannot be produced.
+OpenVAS task still scans the Nessus-style catalog in vuln_ports.json, using
+SYN inside OpenVAS.  A short connect probe that only sees 135/139/445, or
+that sees nothing, must not drop SSH, TLS, SMB, or the rest of that catalog.
 """
 
 from __future__ import annotations
@@ -73,9 +72,9 @@ def ports_to_gvm_range(ports: list[int]) -> str:
 
 def _timeout_sec() -> float:
     try:
-        return max(0.05, min(2.0, float(os.environ.get("PORT_DISCOVERY_TIMEOUT_SEC") or 0.25)))
+        return max(0.05, min(2.0, float(os.environ.get("PORT_DISCOVERY_TIMEOUT_SEC") or 1.0)))
     except (TypeError, ValueError):
-        return 0.25
+        return 1.0
 
 
 def _workers(total_probes: int) -> int:
@@ -87,6 +86,11 @@ def _workers(total_probes: int) -> int:
 
 
 def candidate_range() -> str:
+    profile = (os.environ.get("PORT_PROFILE") or "").strip().lower()
+    if profile in {"vuln", "nexus", "nessus"}:
+        from agent.vuln_ports import tcp_gmp_range
+
+        return tcp_gmp_range()
     return (os.environ.get("PORT_DISCOVERY_RANGE") or DEFAULT_FAST_RANGE).strip() or DEFAULT_FAST_RANGE
 
 

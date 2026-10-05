@@ -804,7 +804,7 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                 if host_open:
                     log.info(
                         "Job %s IP %s: discovery saw %d open TCP port(s) %s; "
-                        "OpenVAS still uses the full fast service set (includes 22/443/445)",
+                        "OpenVAS still scans the full Nessus-style service catalog",
                         job_id,
                         host,
                         len(host_open),
@@ -813,7 +813,7 @@ def _run_job_body(cfg: dict[str, Any], job: dict[str, Any]) -> None:
                 else:
                     log.info(
                         "Job %s IP %s: no candidate port answered the pre-probe; "
-                        "OpenVAS uses the full fast service set",
+                        "OpenVAS still scans the full Nessus-style service catalog",
                         job_id,
                         host,
                     )
