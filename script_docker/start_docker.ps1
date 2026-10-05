@@ -11,8 +11,8 @@
 #       https://122.179.140.167 and https://future-softtech.co.in
 #
 #   start_docker_prod.cmd [cache]
-#       Build, configure nginx, create the SSL certificate, and publish
-#       https://122.179.141.248
+#       Build, configure nginx, create SSL certificates, and publish
+#       https://122.179.141.248 and https://future-softtech.co.in
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("local", "nitin", "prod")]
@@ -43,7 +43,7 @@ $public = switch ($Profile) {
     "prod" {
         @{
             Ip = "122.179.141.248"
-            Domain = ""
+            Domain = "future-softtech.co.in"
         }
     }
     default { $null }

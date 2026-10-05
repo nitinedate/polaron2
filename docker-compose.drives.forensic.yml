@@ -5,142 +5,105 @@
 services:
   api:
     volumes:
-      - type: volume
-        source: aetheris_hostdrive_c_8635bfe8086f
-        target: '/host/c'
-        read_only: true
-        volume:
-          nocopy: true
-      - type: volume
-        source: aetheris_hostdrive_d_116ee6e5c644
-        target: '/host/d'
-        read_only: true
-        volume:
-          nocopy: true
       - type: bind
-        source: 'E:\projects\GIT\polaron2\evidence\cases\CASE-20261004-GALAXYA30S\05_Exports\CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
-        target: '/host/e/projects/GIT/polaron2/evidence/cases/CASE-20261004-GALAXYA30S/05_Exports/CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
+        source: 'C:/'
+        target: '/host/c'
         read_only: true
         bind:
           create_host_path: false
-      - type: volume
-        source: aetheris_hostdrive_f_a21974c125b4
+      - type: bind
+        source: 'D:/'
+        target: '/host/d'
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: 'E:/'
+        target: '/host/e'
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: 'F:/'
         target: '/host/f'
         read_only: true
-        volume:
-          nocopy: true
+        bind:
+          create_host_path: false
   worker-disk:
     volumes:
-      - type: volume
-        source: aetheris_hostdrive_c_8635bfe8086f
-        target: '/host/c'
-        read_only: true
-        volume:
-          nocopy: true
-      - type: volume
-        source: aetheris_hostdrive_d_116ee6e5c644
-        target: '/host/d'
-        read_only: true
-        volume:
-          nocopy: true
       - type: bind
-        source: 'E:\projects\GIT\polaron2\evidence\cases\CASE-20261004-GALAXYA30S\05_Exports\CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
-        target: '/host/e/projects/GIT/polaron2/evidence/cases/CASE-20261004-GALAXYA30S/05_Exports/CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
+        source: 'C:/'
+        target: '/host/c'
         read_only: true
         bind:
           create_host_path: false
-      - type: volume
-        source: aetheris_hostdrive_f_a21974c125b4
+      - type: bind
+        source: 'D:/'
+        target: '/host/d'
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: 'E:/'
+        target: '/host/e'
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: 'F:/'
         target: '/host/f'
         read_only: true
-        volume:
-          nocopy: true
+        bind:
+          create_host_path: false
   worker-parse:
     volumes:
-      - type: volume
-        source: aetheris_hostdrive_c_8635bfe8086f
-        target: '/host/c'
-        read_only: true
-        volume:
-          nocopy: true
-      - type: volume
-        source: aetheris_hostdrive_d_116ee6e5c644
-        target: '/host/d'
-        read_only: true
-        volume:
-          nocopy: true
       - type: bind
-        source: 'E:\projects\GIT\polaron2\evidence\cases\CASE-20261004-GALAXYA30S\05_Exports\CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
-        target: '/host/e/projects/GIT/polaron2/evidence/cases/CASE-20261004-GALAXYA30S/05_Exports/CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
+        source: 'C:/'
+        target: '/host/c'
         read_only: true
         bind:
           create_host_path: false
-      - type: volume
-        source: aetheris_hostdrive_f_a21974c125b4
+      - type: bind
+        source: 'D:/'
+        target: '/host/d'
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: 'E:/'
+        target: '/host/e'
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: 'F:/'
         target: '/host/f'
         read_only: true
-        volume:
-          nocopy: true
+        bind:
+          create_host_path: false
   worker-report:
     volumes:
-      - type: volume
-        source: aetheris_hostdrive_c_8635bfe8086f
-        target: '/host/c'
-        read_only: true
-        volume:
-          nocopy: true
-      - type: volume
-        source: aetheris_hostdrive_d_116ee6e5c644
-        target: '/host/d'
-        read_only: true
-        volume:
-          nocopy: true
       - type: bind
-        source: 'E:\projects\GIT\polaron2\evidence\cases\CASE-20261004-GALAXYA30S\05_Exports\CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
-        target: '/host/e/projects/GIT/polaron2/evidence/cases/CASE-20261004-GALAXYA30S/05_Exports/CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
+        source: 'C:/'
+        target: '/host/c'
         read_only: true
         bind:
           create_host_path: false
-      - type: volume
-        source: aetheris_hostdrive_f_a21974c125b4
-        target: '/host/f'
-        read_only: true
-        volume:
-          nocopy: true
-  worker-agent:
-    volumes:
-      - type: volume
-        source: aetheris_hostdrive_c_8635bfe8086f
-        target: '/host/c'
-        read_only: true
-        volume:
-          nocopy: true
-      - type: volume
-        source: aetheris_hostdrive_d_116ee6e5c644
-        target: '/host/d'
-        read_only: true
-        volume:
-          nocopy: true
       - type: bind
-        source: 'E:\projects\GIT\polaron2\evidence\cases\CASE-20261004-GALAXYA30S\05_Exports\CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
-        target: '/host/e/projects/GIT/polaron2/evidence/cases/CASE-20261004-GALAXYA30S/05_Exports/CASE-20261004-GALAXYA30S_E-608213_Galaxy_A30s_FFS_20261004_133317'
+        source: 'D:/'
+        target: '/host/d'
         read_only: true
         bind:
           create_host_path: false
-      - type: volume
-        source: aetheris_hostdrive_f_a21974c125b4
+      - type: bind
+        source: 'E:/'
+        target: '/host/e'
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: 'F:/'
         target: '/host/f'
         read_only: true
-        volume:
-          nocopy: true
-
-volumes:
-  aetheris_hostdrive_c_8635bfe8086f:
-    external: true
-    name: aetheris_hostdrive_c_8635bfe8086f
-  aetheris_hostdrive_d_116ee6e5c644:
-    external: true
-    name: aetheris_hostdrive_d_116ee6e5c644
-  aetheris_hostdrive_f_a21974c125b4:
-    external: true
-    name: aetheris_hostdrive_f_a21974c125b4
+        bind:
+          create_host_path: false
